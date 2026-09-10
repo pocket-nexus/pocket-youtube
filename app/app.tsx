@@ -30,6 +30,7 @@ import { loadCard, pumpDriver } from "./driver.ts";
 import Player from "./player.tsx";
 import { createYoutubeStore, type YoutubeStore } from "./store.ts";
 import type { ResultItem } from "./protocol.ts";
+import DualScreen from "./dual-screen.tsx";
 
 const INK = "#e8f0f2";
 const DIM = "#8fa3ad";
@@ -70,6 +71,9 @@ export default function App() {
     pumpDriver();
     store.connectTick();
   });
+
+  if (hasFeature("display.auxiliary") && hasFeature("input.touch.auxiliary") && hasFeature("media.playback"))
+    return <DualScreen store={store} />;
 
   return (
     <View class="w-full h-full flex-col" style={{ bgColor: BG }}>

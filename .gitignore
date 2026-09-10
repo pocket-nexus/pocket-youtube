@@ -4,6 +4,7 @@ dist/*.js
 dist/*.pak
 dist/EBOOT.PBP
 dist/vita/
+dist/3ds/
 target/
 *.fig
 .DS_Store

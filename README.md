@@ -1,6 +1,10 @@
 # Pocket YouTube
 
-YouTube on a 2004 Sony PSP, where **the network is a USB cable**.
+YouTube on PSP, PS Vita and New Nintendo 3DS, with a Mac companion.
+
+The New 3DS build separates the **400×240 video display** from the **320×240
+touch control display**. See [the 3DS guide](docs/3DS.md) for installation,
+architecture and validation limits. The PSP USB implementation is described below.
 
 [<img src="https://pocketjs.dev/assets/blog/pocket-youtube-journey.gif" width="480" alt="One search-to-playback journey on a real PSP — click for the hand-held video with sound" />](https://pub-ddde9ba138d04a9a9f922aa1fda6f855.r2.dev/pocketjs/pocket-youtube-real-psp-7ae0b36c.mp4)
 

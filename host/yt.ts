@@ -40,6 +40,7 @@ export const spawnRunner: Runner = async (args) => {
   const proc = Bun.spawn(["yt-dlp", "--ignore-config", "--js-runtimes", `bun:${process.execPath}`, ...ytDlpProxyArgs(), ...args], {
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 60000,
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),

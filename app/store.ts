@@ -12,6 +12,7 @@ import { virtualFrame } from "@pocketjs/framework/clock";
 import { platform } from "@pocketjs/framework/platform";
 import { onHostPush, resolveTransport, type Transport } from "./driver.ts";
 import type { HostMsg, ResultItem } from "./protocol.ts";
+import type { MediaSource } from "@pocketjs/framework/media";
 
 export interface PlayerState {
   videoId: string;
@@ -20,6 +21,8 @@ export interface PlayerState {
   fps: number;
   /** svc-relative .pkst path (videoOpen input). */
   stream: string;
+  source?: MediaSource;
+  position: number;
   playing: boolean;
   /** True once the host reported the source exhausted. */
   ended: boolean;
@@ -44,8 +47,10 @@ export function createYoutubeStore() {
    *  browse screen focuses row 0 so ○ plays the first result immediately. */
   const [searchSerial, setSearchSerial] = createSignal(0);
   let lastHello = -1;
+  let playbackGeneration = 0;
 
   onHostPush((msg: HostMsg) => {
+    if (msg.t === "offline") { setStatus("COMPANION DISCONNECTED — RECONNECTING"); setPhase("connect"); }
     if (msg.t === "playback-error" && player()?.stream === msg.stream) {
       setPlayer(null);
       setPhase("browse");
@@ -65,7 +70,11 @@ export function createYoutubeStore() {
     runEffect<HostMsg>("yt/hello", { device: { target: platform.target } }, (msg) => {
       if (msg.t === "ready") {
         setTransport(resolveTransport());
-        if (phase() === "connect") setPhase("browse");
+        if (phase() === "connect") {
+          const p = player();
+          setPhase("browse");
+          if (p?.source) startPlayback(p.videoId, p.position);
+        }
       }
     });
   };
@@ -121,11 +130,13 @@ export function createYoutubeStore() {
    *  pipelines observed on hardware) — one play request in flight at a time;
    *  taps while resolving are absorbed. */
   let playPending = false;
-  const play = (item: ResultItem): void => {
+  const startPlayback = (videoId: string, position = 0): void => {
     if (playPending) return;
     playPending = true;
+    const owner = ++playbackGeneration;
     setStatus("RESOLVING…");
-    runEffect<HostMsg>("yt/play", { videoId: item.videoId }, (msg) => {
+    runEffect<HostMsg>("yt/play", { videoId, position }, (msg) => {
+      if (owner !== playbackGeneration) return;
       playPending = false;
       if (msg.t === "playing") {
         setStatus("");
@@ -135,6 +146,8 @@ export function createYoutubeStore() {
           durationS: msg.durationS,
           fps: msg.fps,
           stream: msg.stream,
+          source: msg.source,
+          position: msg.position,
           playing: true,
           ended: false,
         });
@@ -145,6 +158,7 @@ export function createYoutubeStore() {
       }
     });
   };
+  const play = (item: ResultItem): void => startPlayback(item.videoId);
 
   const togglePause = (): void => {
     const p = player();
@@ -157,16 +171,30 @@ export function createYoutubeStore() {
   /** Absolute seek; the host clamps to the source range. */
   const seekTo = (seconds: number): void => {
     const p = player();
-    if (!p) return;
+    if (!p || playPending) return;
+    const owner = ++playbackGeneration;
+    if (p.source) { playPending = true; setStatus("SEEKING…"); }
     setPlayer({ ...p, playing: true, ended: false });
-    runEffect<HostMsg>("yt/seek", { to: Math.max(0, seconds) }, () => {});
+    runEffect<HostMsg>("yt/seek", { to: Math.max(0, seconds) }, msg => {
+      if (owner !== playbackGeneration) return;
+      playPending = false;
+      if (msg.t === "playing") {
+        setPlayer({ ...p, stream: msg.stream, source: msg.source, position: msg.position, playing: true, ended: false });
+        setPlaySerial(playSerial() + 1); setStatus("");
+      } else if (msg.t === "error") setStatus(`ERROR: ${msg.message}`);
+    });
   };
 
   const stopPlayback = (): void => {
-    if (!player()) return;
+    playbackGeneration++; playPending = false;
     setPlayer(null);
     setPhase("browse");
     runEffect<HostMsg>("yt/stop", {}, () => {});
+  };
+
+  const reportPlayback = (position: number, ended: boolean): void => {
+    const p = player();
+    if (p) setPlayer({ ...p, position, ended, playing: ended ? false : p.playing });
   };
 
   return {
@@ -189,6 +217,8 @@ export function createYoutubeStore() {
     togglePause,
     seekTo,
     stopPlayback,
+    reportPlayback,
+    retryPlayback: () => { const p = player(); if (p) startPlayback(p.videoId, p.position); },
   };
 }
 
