@@ -129,7 +129,7 @@ function Browse(props: { store: YoutubeStore }) {
         <View class="flex-row items-center gap-2">
           {/* Baked SVG mark (64x64 pow2 canvas, transparent bands) — glyph
               centering in a View never quite landed. */}
-          <Image src="yt-mark.svg" style={{ width: 22, height: 22 }} />
+          <Image src="yt-icon.png" style={{ width: 22, height: 22 }} />
           <Text class="text-lg font-bold tracking-wide" style={{ textColor: INK }}>
             POCKET YOUTUBE
           </Text>

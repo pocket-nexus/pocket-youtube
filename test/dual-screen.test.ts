@@ -3,6 +3,8 @@ import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
 import { OSK_H, OSK_PAD, OSK_ROW_H, OSK_GAP, OSK_LAYERS, layoutRows } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
+import { titleArt, thumbnailArt } from "../host/classic-art.ts";
+import { createCanvas } from "@napi-rs/canvas";
 import { mkdirSync } from "node:fs";
 
 test("auxiliary keyboard, playback controls, local scrubbing and reconnect use the complete app", async () => {
@@ -12,6 +14,21 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   let session = 1, opened = 0, closed = 0, paused = false, volume = 1, position = 0;
   let phase = "idle", job = 0;
   const jobs = new Map<number, any>();
+  const rowsFixture = [
+    ["京都を歩く · A quiet afternoon", "Pocket travel"], ["A little jazz for your day", "Blue Note Sessions"],
+    ["Inside the Nintendo 3DS", "Handheld stories"], ["Coastal road at sunset", "Weekend Films"], ["Coffee & morning light", "Slow living"],
+  ].map(([title, channel], index) => ({ videoId: `fixture000${index}`, title, channel, durationS: 120 + index * 67, views: 24000 + index * 1700, card: `fixture000${index}` }));
+  const artworkReplies = new Map<string, any>();
+  for (const [index, item] of rowsFixture.entries()) {
+    artworkReplies.set(`${item.videoId}:text`, await titleArt(item));
+    const canvas = createCanvas(72, 40), ctx = canvas.getContext("2d");
+    ctx.fillStyle = ["#a8cfce", "#162940", "#9086ad", "#daaa7f", "#d3bca2"][index]; ctx.fillRect(0, 0, 72, 40);
+    ctx.fillStyle = ["#56826a", "#d9a357", "#353651", "#477389", "#815844"][index];
+    for (let x = 0; x < 72; x += 10) ctx.fillRect(x, 15 + (x % 3) * 3, 8, 30);
+    artworkReplies.set(`${item.videoId}:thumbnail`, thumbnailArt(new Uint8Array(ctx.getImageData(0, 0, 72, 40).data)));
+  }
+  const artworkRequests: string[] = [];
+  let thumbnailsReady = false;
   const source = { host: "127.0.0.1", port: 9000, token: "a".repeat(64) };
   const pixels = new Uint8Array(512 * 256 * 4);
   for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) pixels.set([x / 2, y, 110, 255], (y * 512 + x) * 4);
@@ -28,16 +45,24 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
         commands.push(data);
         if (data.t === "hello") result = { t: "ready" };
         else if (data.t === "search") {
-          result = { job: ++job }; jobs.set(job, { t: "results", items: [{ videoId: "abcdefghijk", title: "Video", channel: "Channel", durationS: 120, views: 1, card: "abcdefghijk" }] });
+          result = { job: ++job }; jobs.set(job, { t: "results", items: rowsFixture });
         } else if (data.t === "play" || data.t === "seek") {
           position = data.to ?? data.position ?? 0;
-          result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "abcdefghijk", title: "Video", durationS: 120, fps: 30, source, stream: source.token, position });
+          result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
         } else result = { t: "state", playing: false, position };
       } else if (request.method === "youtube.poll") result = { state: "done", value: jobs.get(data.job) };
-      else if (request.method === "youtube.art") result = { coverage: Buffer.alloc(304 * 16 / 4).toString("base64"), width: 304, height: 16 };
+      else if (request.method === "youtube.artwork") {
+        const key = `${data.videoId}:${data.kind}`; artworkRequests.push(key);
+        result = data.kind === "thumbnail" && !thumbnailsReady ? { pending: true } : artworkReplies.get(key);
+      }
       replies.push(JSON.stringify({ id: request.id, payload: JSON.stringify(result) })); return true;
     },
-    uploadCoverage: () => wasm.ops.uploadTexture(new Uint8Array(512 * 16 * 4), 512, 16, 3),
+    uploadCoverage: (coverage: string, width: number, height: number, foreground: number) => {
+      const w = 2 ** Math.ceil(Math.log2(width)), h = 2 ** Math.ceil(Math.log2(height));
+      const rgba = new Uint8Array(w * h * 4), bytes = Buffer.from(coverage, "base64");
+      for (let i = 0; i < width * height; i++) rgba.set([foreground & 255, foreground >>> 8 & 255, foreground >>> 16 & 255, (bytes[i >> 2] >> ((i & 3) * 2) & 3) * 85], (Math.floor(i / width) * w + i % width) * 4);
+      return wasm.ops.uploadTexture(rgba, w, h, 3);
+    },
   };
   globals.media = {
     open: () => { opened++; phase = "playing"; return true; }, close: () => { closed++; phase = "idle"; },
@@ -63,7 +88,17 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   };
   step(20);
   tap(24, 24, 0); expect(commands.filter(c => c.t === "search")).toHaveLength(0);
-  tap(24, 24); await capture("keyboard");
+  await capture("idle");
+  // The official 37:26 play mark must survive texture padding and flex layout.
+  const topPixels = wasm.render(); let left = 400, right = 0, top = 240, bottom = 0;
+  for (let y = 0; y < 240; y++) for (let x = 0; x < 400; x++) {
+    const at = (y * 400 + x) * 4;
+    if (topPixels[at] > 200 && topPixels[at + 1] < 40 && topPixels[at + 2] < 100) {
+      left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y);
+    }
+  }
+  expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
+  tap(24, 54); await capture("keyboard");
   const rows = layoutRows(OSK_LAYERS.lower, 320 - 2 * OSK_PAD);
   const key = (label: string) => {
     for (const row of rows) for (const rect of row) if (rect.key.ch === label || rect.key.action === label) {
@@ -73,19 +108,29 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   };
   key("q"); key("enter"); step(45);
   expect(commands.find(c => c.t === "search")?.q).toBe("q");
-  tap(120, 75); step(45); expect(opened).toBe(1);
+  await capture("titles-first");
+  expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(1);
+  thumbnailsReady = true; step(180); await capture("results");
+  const firstTitleLoads = artworkRequests.filter(key => key === "fixture0000:text").length;
+  const firstThumbLoads = artworkRequests.filter(key => key === "fixture0000:thumbnail").length;
+  // Scroll far enough to unmount the first row, then return. Native textures stay cached.
+  step(1, 180, 196); step(5, 180, 92); step(); step(25);
+  step(1, 180, 92); step(5, 180, 204); step(); step(90);
+  expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(firstTitleLoads);
+  expect(artworkRequests.filter(key => key === "fixture0000:thumbnail")).toHaveLength(firstThumbLoads);
+  tap(120, 100); step(45); expect(opened).toBe(1);
   await capture("controls");
-  tap(160, 128); expect(paused).toBe(true); expect(opened).toBe(1);
-  tap(160, 128); expect(paused).toBe(false); expect(opened).toBe(1);
+  tap(160, 150); expect(paused).toBe(true); expect(opened).toBe(1);
+  tap(160, 150); expect(paused).toBe(false); expect(opened).toBe(1);
   const before = commands.filter(c => c.t === "seek").length;
-  step(1, 60, 70); step(5, 150, 70); step(5, 220, 70);
+  step(1, 60, 108); step(5, 150, 108); step(5, 220, 108);
   expect(commands.filter(c => c.t === "seek")).toHaveLength(before);
   step(); step(45); expect(commands.filter(c => c.t === "seek")).toHaveLength(before + 1);
   expect(commands.find(c => c.t === "seek")?.to).toBeCloseTo(120 * 200 / 280, 2);
-  tap(166, 190); expect(volume).toBeCloseTo(66 / 136, 2);
+  tap(137, 206); expect(volume).toBeCloseTo(.5, 2);
   const selected = opened;
   tap(272, 20); step(20); expect(opened).toBe(selected);
-  tap(150, 216); step(10); expect(opened).toBe(selected);
+  tap(150, 226); step(10); expect(opened).toBe(selected);
   session = 0; step(15); expect(closed).toBeGreaterThan(0);
   session = 2; step(200); expect(opened).toBe(selected + 1);
   expect(commands.filter(c => c.t === "play").at(-1).position).toBeCloseTo(position, 2);

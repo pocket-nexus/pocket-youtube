@@ -77,8 +77,25 @@ queues, and a 300 ms audio prebuffer bound queued work. Disconnect closes the
 old stream. After a new authenticated session, the app resolves a fresh source
 and resumes its selected video at the remembered position.
 
-Result cards are worker-rendered in bounded coverage strips, preserving CJK
-titles on baked-font devices. Thumbnails are monochrome on this transport.
+The lower screen uses baked silver navigation chrome, a fine gray texture,
+beveled transport buttons, white result rows and a light keyboard. Official
+YouTube vector outlines are rasterized without changing their aspect ratio;
+`artwork/youtube/README.md` records their source and `bun run bake:classic`
+reproduces the assets.
+
+**Titles do not wait for thumbnail downloads.** Each title and channel uses
+one 192×36 coverage response, preserving CJK text on baked-font devices. Each
+72×40 color thumbnail uses one 16-color indexed response. Both fit the 2,500-byte
+offload payload bound. Two worker downloads run at once; image decoding uses
+the companion's canvas library without spawning FFmpeg per thumbnail.
+
+The existing PocketJS resource runtime owns a 1.5 MiB texture cache, up to
+32 entries, two active reads, one read start and one materialization per frame.
+Visible titles have priority over thumbnails and adjacent-row prefetch. A row
+that unmounts withdraws demand; its ready texture remains until cache eviction.
+Pending thumbnail polls back off from six to sixty frames. Playback commands
+use the offload client outside the resource queue, with four tickets reserved.
+
 PSP and Vita retain their existing color-card and stream adapters.
 
 ## Capability ownership and validation
@@ -91,7 +108,8 @@ search, card text rasterization and scrubber state serve both presentations.
 480×272 PSP/Vita presentation.
 
 PocketJS owns native media playback, ticketed streaming, the bounded audio
-format, surface-aware keyboards, and auxiliary WASM rendering. YouTube search,
+format, surface-aware keyboards, auxiliary WASM rendering, resource lifetime
+and bounded indexed-image uploads. YouTube search,
 video selection, encoding policy and the lower-screen layout belong here.
 
 ```sh
@@ -107,3 +125,8 @@ writes software renders into `out/dual-screen/`. Its media host is a test
 double. **Physical decoding, sustained frame rate, audio sync, network recovery
 and touch acceptance require a separate device receipt.** The companion logs
 decoder, presentation, buffer, byte and underrun counters every two seconds.
+
+On September 10, the user confirmed physical video and audio playback after
+the single-slice encoder correction. The subsequent classic interface update
+has separate visual and touch acceptance; that playback confirmation does not
+cover the new interface.

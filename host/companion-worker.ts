@@ -5,6 +5,9 @@ import { search, resolve, thumbnailUrl, type ResolvedStream, type SearchItem } f
 import { nativeMedia } from "./native-media.ts";
 import { cardFont, drawText, fitLines, fmtDuration, fetchThumbRGBA, THUMB_W, THUMB_H } from "./cards.ts";
 
+import { createClassicArt } from "./classic-art.ts";
+const classicArt = createClassicArt();
+
 type Job = { state: "pending" } | { state: "done"; value: unknown } | { state: "error"; message: string };
 const jobs = new Map<number, Job>();
 const items = new Map<string, SearchItem>();
@@ -79,7 +82,9 @@ const methods = {
       case "hello": result = { t: "ready" }; break;
       case "search": {
         if (typeof cmd.q !== "string" || !cmd.q.trim() || cmd.q.length > 200) throw new Error("Invalid search");
+        const playingItem = resolved ? items.get(resolved.videoId) : undefined;
         query = cmd.q; page = 1; items.clear(); artwork.clear();
+        if (playingItem) items.set(playingItem.videoId, playingItem);
         const q = query; result = job(() => results(q, 1)); break;
       }
       case "more": {
@@ -109,6 +114,13 @@ const methods = {
     let promise = artwork.get(videoId);
     if (!promise) { promise = art(videoId); artwork.set(videoId, promise); }
     return JSON.stringify({ coverage: (await promise)[strip], width: 304, height: 16 });
+  },
+  "youtube.artwork": async (raw: string) => {
+    const data = JSON.parse(raw), item = items.get(data.videoId);
+    if (!item) throw new Error("Unknown result");
+    if (data.kind === "text") return JSON.stringify(await classicArt.text(item));
+    if (data.kind === "thumbnail") return JSON.stringify(classicArt.thumbnail(data.videoId));
+    throw new Error("Unknown artwork rendition");
   },
   "youtube.metrics": (raw: string) => { console.log(`Playback ${raw}`); return "{}"; },
 };

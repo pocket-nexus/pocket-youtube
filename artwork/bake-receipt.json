@@ -1,0 +1,110 @@
+{
+  "classic-linen": {
+    "width": 320,
+    "height": 240,
+    "textureWidth": 512,
+    "textureHeight": 256
+  },
+  "classic-nav": {
+    "width": 320,
+    "height": 36,
+    "textureWidth": 512,
+    "textureHeight": 64
+  },
+  "classic-footer": {
+    "width": 320,
+    "height": 28,
+    "textureWidth": 512,
+    "textureHeight": 32
+  },
+  "classic-row": {
+    "width": 320,
+    "height": 64,
+    "textureWidth": 512,
+    "textureHeight": 64
+  },
+  "classic-row-selected": {
+    "width": 320,
+    "height": 64,
+    "textureWidth": 512,
+    "textureHeight": 64
+  },
+  "classic-button": {
+    "width": 72,
+    "height": 56,
+    "textureWidth": 128,
+    "textureHeight": 64
+  },
+  "classic-play-button": {
+    "width": 144,
+    "height": 56,
+    "textureWidth": 256,
+    "textureHeight": 64
+  },
+  "classic-small-button": {
+    "width": 68,
+    "height": 26,
+    "textureWidth": 128,
+    "textureHeight": 32
+  },
+  "classic-wide-button": {
+    "width": 304,
+    "height": 28,
+    "textureWidth": 512,
+    "textureHeight": 32
+  },
+  "classic-play": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-pause": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-back": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-next": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-search": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-chevron": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "classic-speaker": {
+    "width": 32,
+    "height": 32,
+    "textureWidth": 32,
+    "textureHeight": 32
+  },
+  "yt-logo-white": {
+    "width": 220,
+    "height": 49,
+    "textureWidth": 256,
+    "textureHeight": 64
+  },
+  "yt-icon": {
+    "width": 64,
+    "height": 64,
+    "textureWidth": 64,
+    "textureHeight": 64
+  }
+}

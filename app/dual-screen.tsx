@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
 import { AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
 import { auxiliaryViewport } from "@pocketjs/framework/display";
 import { getOps, hostViewport } from "@pocketjs/framework/host";
@@ -6,27 +6,48 @@ import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
-import { offload, uploadCoverage } from "@pocketjs/framework/offload";
+import { offload } from "@pocketjs/framework/offload";
 import { TextField, type OskController } from "@pocketjs/framework/osk";
 import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
 import type { ResultItem } from "./protocol.ts";
+import { createResourceView } from "@pocketjs/framework/resource-view";
+import { ResourceImage } from "@pocketjs/framework/resource";
+import { createArtwork, rendition, type ArtworkCollection } from "./artwork.ts";
 
-const BG = "#0d1117", CARD = "#1a222d", INK = "#f4f5f7", DIM = "#9aa9bb", RED = "#ff4757";
+const BG = "#d9dde3", INK = "#283444", DIM = "#667485", BLUE = "#2676cb";
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-
-function Tile(props: { x: number; y: number; w: number; h: number; label: string; detail?: string; accent?: boolean; onPress: () => void }) {
-  return <Focusable onPress={props.onPress} class="absolute rounded-lg items-center justify-center flex-col focus:border-[#f4f5f7] active:bg-[#39485b]"
-    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h, bgColor: props.accent ? RED : CARD }}>
-    <Text class="text-sm font-bold" style={{ textColor: INK }}>{props.label}</Text>
-    <Show when={props.detail}><Text class="text-xs" style={{ textColor: props.accent ? INK : DIM }}>{props.detail}</Text></Show>
+function Skin(props: { src: string; w: number; h: number }) {
+  return <Image src={props.src} class="absolute" style={{ insetL: 0, insetT: 0, width: props.w, height: props.h }} />;
+}
+function Tile(props: { x: number; y: number; w: number; h: number; label: string; icon?: string; accent?: boolean; onPress: () => void }) {
+  return <Focusable onPress={props.onPress} class="absolute rounded-md overflow-hidden items-center justify-center flex-col focus:border-[#2676cb] active:opacity-70"
+    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h }}>
+    <Skin src={props.h === 26 ? "classic-small-button.png" : props.w > 200 ? "classic-wide-button.png" : props.accent ? "classic-play-button.png" : "classic-button.png"}
+      w={props.h === 26 ? 128 : props.w > 200 ? 512 : props.accent ? 256 : 128} h={props.h < 30 ? 32 : 64} />
+    <Show when={props.icon}><Image src={props.icon!} style={{ width: 32, height: 32 }} /></Show>
+    <Text class="text-xs font-bold" style={{ textColor: props.accent ? "#ffffff" : INK }}>{props.label}</Text>
   </Focusable>;
 }
-
+function Navigation(props: { title: string; children?: JSX.Element }) {
+  return <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 0, width: 320, height: 36, overflow: 1 }}>
+    <Skin src="classic-nav.png" w={512} h={64} />
+    <View class="absolute" style={{ insetT: 11 }}><Text class="text-sm font-bold" style={{ textColor: "#ffffff" }}>{props.title}</Text></View>
+    <View class="absolute" style={{ insetT: 10 }}><Text class="text-sm font-bold" style={{ textColor: "#46566c" }}>{props.title}</Text></View>
+    {props.children}
+  </View>;
+}
 /** Both displays share a playback lifetime. Browsing never unmounts video. */
 export default function DualScreen(props: { store: YoutubeStore }) {
+  const artwork = createArtwork();
   const native = mediaPlayer(), top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
+  const playingItem = createMemo<Pick<ResultItem, "videoId" | "title" | "channel"> | undefined>(previous => {
+    const player = props.store.player();
+    if (!player) return undefined;
+    return props.store.results().find(row => row.videoId === player.videoId)
+      ?? (previous?.videoId === player.videoId ? previous : { videoId: player.videoId, title: player.title, channel: "" });
+  });
   const [panel, setPanel] = createSignal<"controls" | "browse">("browse");
   const [snapshot, setSnapshot] = createSignal<MediaStatus | null>(null);
   const [volume, setVolume] = createSignal(0.8);
@@ -69,35 +90,37 @@ export default function DualScreen(props: { store: YoutubeStore }) {
         style={{ width: top.w, height: top.h, opacity: props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0 ? 1 : 0 }} />
       <Show when={!props.store.player()}>
         <View class="absolute inset-0 items-center justify-center flex-col gap-3">
-          <Image src="yt-mark.svg" style={{ width: 64, height: 44 }} />
-          <Text class="text-xl font-bold" style={{ textColor: INK }}>Pocket YouTube</Text>
-          <Text class="text-sm" style={{ textColor: DIM }}>Find something to watch below.</Text>
+          <View style={{ width: 220, height: 49, overflow: 1 }}><Skin src="yt-logo-white.png" w={256} h={64} /></View>
+          <Text class="text-sm" style={{ textColor: "#abb3bd" }}>Find something to watch below.</Text>
         </View>
       </Show>
       <Show when={props.store.player() && !(snapshot()?.presentedFrames)}>
         <View class="absolute inset-0 items-center justify-center">
-          <Text class="text-sm" style={{ textColor: INK }}>{error() ? "PLAYBACK UNAVAILABLE" : "BUFFERING VIDEO…"}</Text>
+          <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "PLAYBACK UNAVAILABLE" : "BUFFERING VIDEO…"}</Text>
         </View>
       </Show>
     </View>
     <AuxiliarySurface>{() => <View style={{ width: bottom.width, height: bottom.height, bgColor: BG }}>
-      <Show when={panel() === "controls" && props.store.player()} fallback={<Browser store={props.store} returnToPlayer={() => setPanel("controls")} />}>
-        <PlayingTitle videoId={() => props.store.player()?.videoId ?? ""} />
-        <Tile x={236} y={4} w={76} h={30} label="Queue" onPress={() => setPanel("browse")} />
-        <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "BUFFERING" : "")} />
-        <Tile x={8} y={96} w={72} h={64} label="-10" detail="seconds" onPress={() => props.store.seekTo(position() - 10)} />
-        <Tile x={88} y={96} w={144} h={64} label={props.store.player()?.ended ? "Replay" : props.store.player()?.playing ? "Pause" : "Play"}
-          detail={props.store.player()?.ended ? "From beginning" : "START"} accent onPress={playPause} />
-        <Tile x={240} y={96} w={72} h={64} label="+10" detail="seconds" onPress={() => props.store.seekTo(position() + 10)} />
-        <Tile x={8} y={168} w={72} h={48} label={volume() === 0 ? "Unmute" : "Mute"} onPress={() => changeVolume(volume() === 0 ? .8 : 0)} />
+      <Skin src="classic-linen.png" w={512} h={256} />
+      <Show when={panel() === "controls" && props.store.player()} fallback={<Browser store={props.store} artwork={artwork} returnToPlayer={() => setPanel("controls")} />}>
+        <Navigation title="Now Playing"><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
+        <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><Artwork item={playingItem()!} artwork={artwork} compact /></View>
+        <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "Buffering…" : "")} />
+        <Tile x={8} y={124} w={72} h={56} label="10 sec" icon="classic-back.png" onPress={() => props.store.seekTo(position() - 10)} />
+        <Tile x={88} y={124} w={144} h={56} label={props.store.player()?.ended ? "Replay" : props.store.player()?.playing ? "Pause" : "Play"}
+          icon={props.store.player()?.playing ? "classic-pause.png" : "classic-play.png"} accent onPress={playPause} />
+        <Tile x={240} y={124} w={72} h={56} label="10 sec" icon="classic-next.png" onPress={() => props.store.seekTo(position() + 10)} />
+        <Focusable onPress={() => changeVolume(volume() === 0 ? .8 : 0)} class="absolute" style={{ insetL: 8, insetT: 189, width: 36, height: 34 }}>
+          <Image src="classic-speaker.png" style={{ width: 32, height: 32, opacity: volume() === 0 ? .4 : 1 }} />
+        </Focusable>
         <VolumeTile value={volume} change={changeVolume} />
-        <Tile x={256} y={168} w={56} h={48} label="Stop" onPress={stop} />
-        <View class="absolute" style={{ insetL: 12, insetT: 224 }}><Text class="text-xs" style={{ textColor: DIM }}>L / R  skip     B  browse</Text></View>
+        <Tile x={244} y={196} w={68} h={26} label="Stop" onPress={stop} />
+        <View class="absolute" style={{ insetL: 77, insetT: 227 }}><Text class="text-xs" style={{ textColor: DIM }}>L / R skip     B browse</Text></View>
         <Show when={error()}>
           <View class="absolute inset-0 flex-col items-center justify-center gap-3" style={{ bgColor: BG }}>
             <Text class="text-sm" style={{ textColor: INK, width: 288 }}>{error()}</Text>
-            <Focusable onPress={() => { setError(""); props.store.retryPlayback(); }} class="rounded-lg px-6 py-3 bg-[#ff4757]"><Text class="text-sm font-bold text-white">Retry</Text></Focusable>
-            <Focusable onPress={stop} class="rounded-lg px-6 py-3 bg-[#1a222d]"><Text class="text-sm text-white">Back to search</Text></Focusable>
+            <Focusable onPress={() => { setError(""); props.store.retryPlayback(); }} class="rounded-lg px-6 py-3 bg-[#2676cb]"><Text class="text-sm font-bold text-white">Retry</Text></Focusable>
+            <Focusable onPress={stop} class="rounded-lg px-6 py-3 bg-[#667485]"><Text class="text-sm text-white">Back to search</Text></Focusable>
           </View>
         </Show>
       </Show>
@@ -105,6 +128,15 @@ export default function DualScreen(props: { store: YoutubeStore }) {
   </>;
 }
 
+function Rail(props: { width: number; ratio: number }) {
+  const fill = () => Math.max(0, Math.min(1, props.ratio)) * props.width;
+  return <>
+    <View class="absolute rounded-sm" style={{ insetT: 4, width: props.width, height: 6, bgColor: "#ffffff" }} />
+    <View class="absolute rounded-sm" style={{ insetT: 3, width: props.width, height: 5, bgColor: "#929da9" }} />
+    <View class="absolute rounded-sm" style={{ insetT: 3, width: Math.max(2, fill()), height: 5, bgColor: BLUE }} />
+    <View class="absolute rounded-full w-[12] h-[12]" style={{ insetL: fill() - 6, width: 12, height: 12, bgColor: "#f8fafc", borderWidth: 1, borderColor: "#8997a6" }} />
+  </>;
+}
 function SeekCard(props: { position: () => number; duration: () => number; seek: (s: number) => void; status: () => string }) {
   const scrubber = createMediaScrubber(props.seek);
   const [preview, setPreview] = createSignal<number | null>(null);
@@ -113,105 +145,79 @@ function SeekCard(props: { position: () => number; duration: () => number; seek:
     else scrubber.move((x - 20) / 280, props.duration());
     setPreview(scrubber.preview());
   };
-  createGesture({ surface: "auxiliary", region: { rect: () => ({ x: 8, y: 40, w: 304, h: 48 }) }, tapSlop: 9999,
+  createGesture({ surface: "auxiliary", region: { rect: () => ({ x: 8, y: 86, w: 304, h: 32 }) }, tapSlop: 9999,
     onDown: c => update(c.x, true), onMove: c => update(c.x, false),
     onUp: c => { update(c.x, false); scrubber.commit(); setPreview(null); },
     onCancel: () => { scrubber.cancel(); setPreview(null); } });
   const current = () => preview() ?? props.position();
-  return <View class="absolute rounded-lg" style={{ insetL: 8, insetT: 40, width: 304, height: 48, bgColor: CARD }}>
-    <View class="absolute" style={{ insetL: 12, insetT: 7 }}><Text class="text-xs" style={{ textColor: INK }}>{`${time(current())} / ${time(props.duration())}`}</Text></View>
-    <View class="absolute" style={{ insetL: 130, insetT: 7 }}><Text class="text-xs" style={{ textColor: DIM }}>{props.status()}</Text></View>
-    <View class="absolute rounded-sm" style={{ insetL: 12, insetT: 29, width: 280, height: 5, bgColor: "#39485b" }} />
-    <View class="absolute rounded-sm" style={{ insetL: 12, insetT: 29, width: Math.max(4, 280 * Math.min(1, current() / (props.duration() || 1))), height: 5, bgColor: RED }} />
+  return <View class="absolute" style={{ insetL: 20, insetT: 86, width: 280, height: 32 }}>
+    <View class="absolute"><Text class="text-xs" style={{ textColor: DIM }}>{time(current())}</Text></View>
+    <View class="absolute" style={{ insetR: 0 }}><Text class="text-xs" style={{ textColor: DIM }}>{time(props.duration())}</Text></View>
+    <View class="absolute items-center" style={{ width: 280 }}><Text class="text-xs" style={{ textColor: DIM }}>{props.status()}</Text></View>
+    <View class="absolute" style={{ insetT: 18 }}><Rail width={280} ratio={current() / (props.duration() || 1)} /></View>
   </View>;
 }
-
-function PlayingTitle(props: { videoId: () => string }) {
-  let node: NodeMirror | undefined, texture = -1, request = 0, tick = 0, loaded = "", busy = false;
-  const [visible, setVisible] = createSignal(false);
-  onFrame(() => {
-    const id = props.videoId();
-    if (busy || !id || loaded === id || ++tick % 30 || !offload().connected()) return;
-    busy = true;
-    request = offload().request("youtube.art", JSON.stringify({ videoId: id, strip: 0 }), result => {
-      busy = false;
-      if (!result.ok || props.videoId() !== id) return;
-      const data = JSON.parse(result.value), handle = uploadCoverage(data.coverage, data.width, data.height, 0xffffff);
-      if (handle === undefined || handle < 0) return;
-      if (texture >= 0) getOps().freeTexture?.(texture);
-      texture = handle; loaded = id;
-      if (node) getOps().setImage(node.id, handle);
-      setVisible(true);
-    });
-    if (!request) busy = false;
-  });
-  onCleanup(() => { if (request) offload().cancel(request); if (texture >= 0) getOps().freeTexture?.(texture); });
-  return <View class="absolute" style={{ insetL: 12, insetT: 10, width: 212, height: 18, overflow: 1 }}>
-    <Show when={!visible()}><Text class="text-xs font-bold" style={{ textColor: DIM }}>NOW PLAYING</Text></Show>
-    <Image nodeRef={n => { node = n; }} class="absolute" style={{ insetL: -92, insetT: 0, width: 512, height: 16, opacity: visible() ? 1 : 0 }} />
-  </View>;
-}
-
 function VolumeTile(props: { value: () => number; change: (v: number) => void }) {
-  createGesture({ surface: "auxiliary", region: { rect: () => ({ x: 88, y: 168, w: 160, h: 48 }) }, tapSlop: 9999,
-    onDown: c => props.change((c.x - 100) / 136), onMove: c => props.change((c.x - 100) / 136) });
-  return <View class="absolute rounded-lg" style={{ insetL: 88, insetT: 168, width: 160, height: 48, bgColor: CARD }}>
-    <View class="absolute" style={{ insetL: 12, insetT: 7 }}><Text class="text-xs" style={{ textColor: DIM }}>{`VOLUME  ${Math.round(props.value() * 100)}%`}</Text></View>
-    <View class="absolute rounded-sm" style={{ insetL: 12, insetT: 30, width: 136, height: 5, bgColor: "#39485b" }} />
-    <View class="absolute rounded-sm" style={{ insetL: 12, insetT: 30, width: Math.max(3, 136 * props.value()), height: 5, bgColor: INK }} />
-  </View>;
+  createGesture({ surface: "auxiliary", region: { rect: () => ({ x: 44, y: 190, w: 190, h: 34 }) }, tapSlop: 9999,
+    onDown: c => props.change((c.x - 52) / 170), onMove: c => props.change((c.x - 52) / 170) });
+  return <View class="absolute" style={{ insetL: 52, insetT: 204 }}><Rail width={170} ratio={props.value()} /></View>;
 }
-
-function Browser(props: { store: YoutubeStore; returnToPlayer: () => void }) {
+function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; returnToPlayer: () => void }) {
   let keyboard: OskController | undefined;
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   createEffect(() => { props.store.searchSerial(); list()?.focusRow(0); });
   onButtonPress(BTN.TRIANGLE, () => keyboard?.open());
+  createResourceView(props.artwork, { demand: () => {
+    const first = Math.floor((list()?.scroller.offset() ?? 0) / 64);
+    return props.store.results().slice(first + 2, first + 5).flatMap(item => [
+      { input: rendition(item, "text"), priority: 20 }, { input: rendition(item, "thumbnail"), priority: 30 },
+    ]);
+  } });
   return <View style={{ width: 320, height: 240 }}>
-    <View class="absolute" style={{ insetL: 8, insetT: 8, width: 304, height: 36 }}>
-      <TextField surface="auxiliary" keyHeight={30} value={props.store.query} onInput={text => props.store.setQuery(text.slice(0, 200))} onSubmit={props.store.search}
-        placeholder="Search YouTube   ·   X" ref={value => { keyboard = value; }}
-        class="w-full h-[36] rounded-lg bg-[#1a222d] px-3 py-2 focus:border-[#ff4757]" />
+    <Navigation title="Videos" />
+    <View class="absolute" style={{ insetL: 8, insetT: 40, width: 304, height: 28 }}>
+      <TextField surface="auxiliary" theme="light" keyHeight={30} value={props.store.query} onInput={text => props.store.setQuery(text.slice(0, 200))} onSubmit={props.store.search}
+        placeholder="Search YouTube" ref={value => { keyboard = value; }}
+        class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2] focus:border-[#2676cb]" />
     </View>
-    <View class="absolute" style={{ insetL: 8, insetT: 52, width: 304, height: 140 }}>
-      <Show when={props.store.results().length} fallback={<View class="flex-col gap-3 py-4">
-        <Text class="text-sm" style={{ textColor: INK }}>{props.store.phase() === "connect" ? "CONNECTING TO COMPANION" : "Your next video starts here."}</Text>
+    <View class="absolute" style={{ insetL: 0, insetT: 74, width: 320, height: 138 }}>
+      <Show when={props.store.results().length} fallback={<View class="flex-col items-center gap-3 py-5">
+        <Text class="text-sm font-bold" style={{ textColor: INK }}>{props.store.phase() === "connect" ? "Connecting…" : "Find your next video"}</Text>
         <Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Search by title, channel or topic."}</Text>
       </View>}>
-        <VirtualList surface="auxiliary" count={props.store.results().length + (props.store.hasMore() ? 1 : 0)} rowHeight={68} height={140} overscan={0}
+        <VirtualList surface="auxiliary" count={props.store.results().length + (props.store.hasMore() ? 1 : 0)} rowHeight={64} height={138} overscan={0}
           inputActive={() => !keyboard?.isOpen()} ref={setList}
           onRowPress={index => index < props.store.results().length ? props.store.play(props.store.results()[index]) : props.store.loadMore()}
-          renderRow={index => <Show when={props.store.results()[index]} fallback={<Text class="text-sm text-white">{props.store.searching() ? "Loading…" : "Load more"}</Text>}>
-            <Artwork item={props.store.results()[index]} active={() => list()?.focusedIndex() === index} />
+          renderRow={index => <Show when={props.store.results()[index]} fallback={<View class="items-center py-4"><Text class="text-sm" style={{ textColor: DIM }}>{props.store.searching() ? "Loading…" : "Load more videos"}</Text></View>}>
+            <Artwork item={props.store.results()[index]} artwork={props.artwork} active={() => list()?.focusedIndex() === index} />
           </Show>} />
       </Show>
     </View>
-    <Show when={props.store.player()} fallback={<View class="absolute" style={{ insetL: 12, insetT: 204, width: 296 }}>
-      <Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Touch or D-pad to select · A to play"}</Text>
-    </View>}>
-      <Tile x={8} y={198} w={304} h={36} label="Back to playing video" onPress={props.returnToPlayer} />
-    </Show>
+    <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
+      <Skin src="classic-footer.png" w={512} h={32} />
+      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Touch to play  ·  X to search"}</Text>}>
+        <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing  ▸</Text></Focusable>
+      </Show>
+    </View>
   </View>;
 }
-
-/** Fixed-size, worker-rendered strips preserve arbitrary titles on baked-font hosts. */
-function Artwork(props: { item: ResultItem; active: () => boolean }) {
-  const nodes: NodeMirror[] = [], textures: number[] = [];
-  let strip = 0, busy = false, disposed = false, tick = 0, request = 0;
-  onFrame(() => {
-    if (busy || disposed || strip >= 4 || ++tick % 12 || !offload().connected()) return;
-    busy = true;
-    request = offload().request("youtube.art", JSON.stringify({ videoId: props.item.videoId, strip }), result => {
-      busy = false;
-      if (disposed || !result.ok) return;
-      const data = JSON.parse(result.value), handle = uploadCoverage(data.coverage, data.width, data.height, 0xffffff);
-      if (handle === undefined || handle < 0) return;
-      textures.push(handle); if (nodes[strip]) getOps().setImage(nodes[strip].id, handle); strip++;
-    });
-    if (!request) busy = false;
-  });
-  onCleanup(() => { disposed = true; if (request) offload().cancel(request); for (const handle of textures) getOps().freeTexture?.(handle); });
-  return <View style={{ width: 304, height: 64, bgColor: props.active() ? "#26364b" : CARD, overflow: 1 }}>
-    <For each={[0, 1, 2, 3]}>{index => <Image nodeRef={node => { nodes[index] = node; }} class="absolute" style={{ insetL: 0, insetT: index * 16, width: 512, height: 16 }} />}</For>
+function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {
+  const text = () => rendition(props.item, "text"), thumbnail = () => rendition(props.item, "thumbnail");
+  const view = createResourceView(props.artwork, { demand: () => [
+    { input: text(), priority: 0, pin: true }, { input: thumbnail(), priority: 10, pin: true },
+  ] });
+  return <View style={{ width: 320, height: props.compact ? 48 : 64, overflow: 1 }}>
+    <Show when={!props.compact}><Skin src={props.active?.() ? "classic-row-selected.png" : "classic-row.png"} w={512} h={64} /></Show>
+    <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: props.compact ? 4 : 8, width: 72, height: 40, overflow: 1 }}
+      fallback={() => <View class="items-center justify-center" style={{ width: 72, height: 40, bgColor: "#b0b9c5" }}><Image src="classic-play.png" style={{ width: 24, height: 24, opacity: .7 }} /></View>} />
+    <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: props.compact ? 4 : 7, width: 192, height: 36, overflow: 1 }}
+      fallback={() => <View class="flex-col gap-1" style={{ width: 192, height: 36, paddingT: 3 }}>
+        <For each={[180, 138, 80]}>{width => <View style={{ width, height: 6, bgColor: "#d0d7df" }} />}</For>
+      </View>} />
+    <Show when={!props.compact}>
+      <View class="absolute" style={{ insetL: 10, insetT: 49 }}><Text class="text-xs" style={{ textColor: DIM }}>{time(props.item.durationS ?? 0)}</Text></View>
+      <View class="absolute" style={{ insetL: 92, insetT: 47 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${(props.item.views ?? 0) >= 1000 ? `${Math.floor((props.item.views ?? 0) / 1000)}K` : props.item.views ?? 0} views`}</Text></View>
+      <Image src="classic-chevron.png" class="absolute" style={{ insetL: 296, insetT: 18, width: 24, height: 24 }} />
+    </Show>
   </View>;
 }

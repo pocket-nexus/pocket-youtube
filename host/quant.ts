@@ -162,6 +162,8 @@ export interface QuantizeOptions {
   /** Floyd–Steinberg serpentine dithering (default true — hides banding AND
    *  per-frame palette flicker at video rates). */
   dither?: boolean;
+  /** Palette size; defaults to the legacy 256-color wire format. */
+  colors?: number;
 }
 
 /**
@@ -178,6 +180,8 @@ export function quantize(
     throw new Error(`quantize: rgba length ${rgba.length} != ${w}x${h}*4`);
   }
   const dither = opts.dither ?? true;
+  const colors = opts.colors ?? 256;
+  if (!Number.isInteger(colors) || colors < 1 || colors > 256) throw new Error("Invalid palette size");
   const sums: BinSums = {
     hist: new Uint32Array(BIN_COUNT),
     r: new Float64Array(BIN_COUNT),
@@ -194,7 +198,7 @@ export function quantize(
     sums.g[bin] += g;
     sums.b[bin] += b;
   }
-  const palette = medianCut(sums, 256);
+  const palette = medianCut(sums, colors);
   const indices = new Uint8Array(w * h);
   // Lazy nearest-neighbor cache over 15-bit bins: dithered error offsets
   // create colors outside the histogram, so the cache covers all bins.
