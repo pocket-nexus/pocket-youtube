@@ -41,7 +41,22 @@ test("real encoder produces decodable baseline video and timestamped audio below
   let audioBytes = 0, videoFrames = 0, audioFrames = 0, previous = 0;
   for await (const packet of nativeMedia(source(), 0, new AbortController().signal)) {
     expect(packet.ptsMs).toBeGreaterThanOrEqual(previous); previous = packet.ptsMs;
-    if (packet.kind === 1) { video.push(packet.data); videoFrames++; expect(packet.data.length).toBeLessThanOrEqual(MEDIA.packetBytes); }
+    if (packet.kind === 1) {
+      video.push(packet.data); videoFrames++; expect(packet.data.length).toBeLessThanOrEqual(MEDIA.packetBytes);
+      // Inspect the encoded bitstream, since zerolatency sliced threading can
+      // override slices=1 while ffprobe still reports valid baseline H.264.
+      const bytes = packet.data, slices: number[] = [];
+      for (let i = 0; i + 3 < bytes.length; i++) {
+        if (bytes[i] || bytes[i + 1]) continue;
+        const prefix = bytes[i + 2] === 1 ? 3 : bytes[i + 2] === 0 && bytes[i + 3] === 1 ? 4 : 0;
+        if (!prefix) continue;
+        const type = bytes[i + prefix] & 31;
+        if (type >= 1 && type <= 5) slices.push(type);
+        i += prefix - 1;
+      }
+      expect(slices, `frame ${videoFrames} must contain one complete slice`).toHaveLength(1);
+      if (videoFrames === 1) expect(slices[0]).toBe(5);
+    }
     else { audioBytes += packet.data.length; audioFrames += packet.data.length - 7; }
   }
   expect(videoFrames).toBe(90);

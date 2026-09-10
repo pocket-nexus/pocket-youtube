@@ -67,12 +67,14 @@ export async function* nativeMedia(source: ResolvedStream, seconds: number, sign
   const common = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-xerror"];
   const seek = seconds > 0 ? ["-ss", String(seconds)] : [];
   const options = { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...proxyEnv() } } as const;
+  // zerolatency enables sliced threading: slices=1 alone still emits one
+  // slice per encoder thread. The native adapter submits one slice per frame.
   const video = Bun.spawn([...common, ...network(source.videoUrl), ...seek, "-i", source.videoUrl,
     "-an", "-vf", `fps=30,scale=${fit.w}:${fit.h}:flags=lanczos,pad=512:256:(ow-iw)/2:(oh-ih)/2:black,setsar=1`,
-    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-profile:v", "baseline", "-level:v", "3.0",
+    "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-threads:v", "1", "-profile:v", "baseline", "-level:v", "3.0",
     "-pix_fmt", "yuv420p", "-b:v", String(NATIVE_VIDEO.bitrate), "-maxrate", String(NATIVE_VIDEO.maxrate),
     "-bufsize", "750000", "-g", "30", "-keyint_min", "30", "-bf", "0",
-    "-x264-params", "aud=1:repeat-headers=1:scenecut=0:slices=1", "-f", "h264", "pipe:1"], options);
+    "-x264-params", "aud=1:repeat-headers=1:scenecut=0:slices=1:sliced-threads=0", "-f", "h264", "pipe:1"], options);
   const audio = Bun.spawn([...common, ...network(source.audioUrl), ...seek, "-i", source.audioUrl,
     "-vn", "-ac", "2", "-ar", String(MEDIA.sampleRate), "-f", "s16le", "pipe:1"], options);
   const stop = () => { video.kill(); audio.kill(); };

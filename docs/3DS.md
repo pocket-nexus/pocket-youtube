@@ -61,9 +61,13 @@ reinstalling the launcher; a guest package alone cannot install a decoder.
 
 The stream uses **512×256 baseline H.264 at 30 fps**, 650 kbps target video
 rate, 750 kbps maximum rate, no B-frames, and a one-second keyframe interval.
+Each frame contains **one complete VCL slice**. The encoder uses one thread
+and disables sliced threading; `slices=1` alone does not override the
+zero-latency preset's thread-based splitting. That splitting caused MVD to
+reject the second slice of the first frame with `0x17005` on hardware.
 Source aspect ratio is fitted to the 400×240 display before encoding. Stereo
 22.05 kHz ADPCM uses about 177 kbps. A three-second moving test pattern measured
-**856,723 bit/s including packet headers**, with 90 decodable video frames.
+**854,712 bit/s including packet headers**, with 90 decodable video frames.
 That is a software fixture measurement; it does not establish real Wi-Fi or
 physical playback performance.
 
