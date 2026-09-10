@@ -44,7 +44,14 @@ payloads; the reader chases the tail and discards torn frames. Pause is
 - A PSP with custom firmware and [PSPLINK](https://github.com/pspdev/psplinkusb)
   (`usbhostfs_pc` on the Mac side), connected over USB
 - [Bun](https://bun.sh), [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
-  [ffmpeg](https://ffmpeg.org) on the Mac (`brew install yt-dlp ffmpeg`)
+  [ffmpeg](https://ffmpeg.org) on the Mac (`brew install yt-dlp ffmpeg`).
+  Use **yt-dlp 2026.08.19 or newer**, with its matching `yt-dlp-ejs` package
+  (included by Homebrew). Update an existing install with `brew upgrade yt-dlp`.
+  The companion supplies its Bun executable for YouTube's JavaScript
+  challenges and ignores user yt-dlp configuration. Video and audio are
+  resolved as separate tracks, with a muxed source as fallback.
+  FFmpeg must support HTTP `request_size` and `initial_request_size`
+  (`ffmpeg -h protocol=http`; validated with 8.1.1).
 - The PocketJS PSP toolchain (installed by `bun run bootstrap`)
 
 ## Quick start
@@ -97,6 +104,14 @@ bun run cover              # regenerate the XMB ICON0/PIC1 art
 The sim journeys boot the real bundle against PocketJS's wasm core with a
 canned host driver — the on-screen-keyboard paths are derived from the
 actual key layout, and one journey types by touch. No device required.
+
+The media tests run FFmpeg against a local HTTP server that rejects
+unbounded byte ranges. Playback starts after **both video and audio reach
+the stream**, with a 15-second startup timeout. Decoder failures return an
+error instead of reporting normal end-of-stream or leaving a 0:00 player.
+If a configured proxy can search YouTube but fails on its video CDN, test
+the companion without that proxy; the metadata and media connections are
+separate requests.
 
 PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns

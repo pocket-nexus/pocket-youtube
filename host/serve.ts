@@ -202,9 +202,27 @@ async function doPlay(id: number, videoId: string, ctx: TransportCtx): Promise<H
   const rel = `media/play-${++playSerial}.pkst`;
   const totalFrames = Math.max(0, Math.round(stream.durationS * ctx.profile.fps));
   const sink = ctx.makeSink(rel, totalFrames);
-  session = new PlaySession(stream, sink, {
-    onEnd: () => ctx.post({ t: "ended" }),
+  const playing = new PlaySession(stream, sink, {
+    onEnd: () => {
+      if (session === playing) ctx.post({ t: "ended" });
+    },
+    onError: (message) => {
+      if (session !== playing) return;
+      console.error(`playback failed: ${message}`);
+      ctx.post({ t: "playback-error", stream: rel, message: message.slice(0, 300) });
+      playing.close();
+      session = null;
+    },
   });
+  session = playing;
+  try {
+    await playing.ready;
+    if (session !== playing) throw new Error("Playback cancelled");
+  } catch (error) {
+    playing.close();
+    if (session === playing) session = null;
+    throw error;
+  }
   console.log(`  streaming "${stream.title}" (${stream.durationS}s) -> ${rel}`);
   return {
     t: "playing",

@@ -319,11 +319,22 @@ describe("yt-dlp adapter", () => {
       stderr: "",
     });
     const r = await resolveVideo("abc", ok);
-    expect(r.url).toBe("https://cdn/x");
+    expect(r.videoUrl).toBe("https://cdn/x");
+    expect(r.audioUrl).toBe("https://cdn/x");
     expect(r.durationS).toBe(10);
     const noUrl: Runner = async () => ({ ok: true, stdout: "{}", stderr: "" });
-    expect(resolveVideo("abc", noUrl)).rejects.toThrow(/no direct url/);
+    expect(resolveVideo("abc", noUrl)).rejects.toThrow(/no direct video\/audio urls/);
     const failed: Runner = async () => ({ ok: false, stdout: "", stderr: "boom" });
     expect(search("q", 1, failed)).rejects.toThrow(/boom/);
+  });
+  test("resolve selects separate adaptive tracks and rejects a missing audio track", async () => {
+    const video = { url: "https://cdn/video", vcodec: "av01", acodec: "none", width: 1280, height: 720 };
+    const audio = { url: "https://cdn/audio", vcodec: "none", acodec: "opus" };
+    const run = (formats: unknown[]): Runner => async () => ({ ok: true, stdout: JSON.stringify({ requested_formats: formats }), stderr: "" });
+    const r = await resolveVideo("abc", run([audio, video]));
+    expect(r.videoUrl).toBe(video.url);
+    expect(r.audioUrl).toBe(audio.url);
+    expect([r.width, r.height]).toEqual([1280, 720]);
+    await expect(resolveVideo("abc", run([video]))).rejects.toThrow(/no direct video\/audio urls/);
   });
 });

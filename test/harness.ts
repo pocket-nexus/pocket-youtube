@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import type { EffectEvent } from "../vendor/pocketjs/hosts/sim/sim.ts";
+import type { HostOps } from "../vendor/pocketjs/framework/src/host.ts";
 import { compilePocketTarget } from "../scripts/pocket-plan.ts";
 
 export {
@@ -40,6 +41,7 @@ let wasmBytes: ArrayBuffer | null = null;
 export async function bootWorld(
   hz: number,
   extraGlobals?: Record<string, unknown>,
+  opOverrides?: Partial<HostOps>,
 ): Promise<SimWorld> {
   // ALWAYS rebuild: cargo's own caching makes a fresh build a ~2s no-op,
   // and a stale pocketjs.wasm silently reroutes every touch journey through
@@ -59,6 +61,7 @@ export async function bootWorld(
   }
   if (!wasmBytes) wasmBytes = await Bun.file(WASM).arrayBuffer();
   const wasm = await createWasmUi(wasmBytes);
+  Object.assign(wasm.ops, opOverrides);
   const g = globalThis as Record<string, unknown>;
   const effects: EffectEvent[] = [];
   const inbox: string[] = [];

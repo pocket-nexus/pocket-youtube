@@ -158,6 +158,48 @@ describe("determinism", () => {
   }, 30000);
 });
 
+describe("playback failures", () => {
+  test("failed startup stays in browse and displays the host error", async () => {
+    const host = cannedHost();
+    const result = await run(Math.ceil(kb.end + 3.5), JOURNEY, {
+      driver: (cmd, deliver) => {
+        if (cmd.kind === "yt/play") deliver({ t: "error", id: cmd.id, message: "Video download failed" });
+        else host.driver(cmd, deliver);
+      },
+    });
+    expect(treeHasText(result.tree, "ERROR: Video download failed")).toBe(true);
+    expect(treeHasText(result.tree, "SEARCH")).toBe(true);
+    expect(treeHasText(result.tree, "PAUSED")).toBe(false);
+  }, 30000);
+
+  test("a playback-error push leaves the matching player and ignores an old stream", async () => {
+    const host = cannedHost();
+    const replies: string[] = [];
+    const world = await bootWorld(60, undefined, {
+      svcOpen: () => true,
+      svcSend: (line) => {
+        const { t, id, ...payload } = JSON.parse(line);
+        host.driver({ kind: `yt/${t}`, id, payload }, (msg) => replies.push(JSON.stringify(msg)));
+      },
+      svcPoll: () => replies.splice(0).join("\n") || undefined,
+    });
+    const frames = Math.ceil(kb.end + 3.5) * 60;
+    const { masks, analogs } = scriptToMasks(JOURNEY, 60, frames);
+    for (let f = 0; f < frames; f++) { world.frame(masks[f], analogs[f]); world.tick(); }
+    expect(treeHasText(world.getTree(), "PAUSED")).toBe(true);
+    const push = (stream: string) => {
+      replies.push(JSON.stringify({ t: "playback-error", stream, message: "Video connection lost" }));
+      for (let i = 0; i < 20; i++) { world.frame(0); world.tick(); }
+      return world.getTree();
+    };
+    expect(treeHasText(push("media/old.pkst"), "PAUSED")).toBe(true);
+    const tree = push("media/play-1.pkst");
+    expect(treeHasText(tree, "ERROR: Video connection lost")).toBe(true);
+    expect(treeHasText(tree, "SEARCH")).toBe(true);
+    expect(treeHasText(tree, "PAUSED")).toBe(false);
+  }, 30000);
+});
+
 describe("connect phase", () => {
   test("an offline host keeps the connect screen up and retries hello", async () => {
     // A driver that answers nothing: commands hang forever (worse than an

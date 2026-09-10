@@ -74,7 +74,7 @@ function fakeDevice(port: number, app = "youtube"): Promise<FakeDevice> {
     socket.setNoDelay(true);
     const frames: WireFrame[] = [];
     const waiters: { n: number; done: () => void }[] = [];
-    let buf = new Uint8Array(0);
+    let buf: Uint8Array = new Uint8Array(0);
     let acked = false;
     socket.on("data", (chunk: Buffer) => {
       const merged = new Uint8Array(buf.length + chunk.length);

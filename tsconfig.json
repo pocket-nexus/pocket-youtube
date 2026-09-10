@@ -18,5 +18,5 @@
       "tools/cli/*": ["./vendor/pocketjs/tools/cli/*"]
     }
   },
-  "include": ["app", "tools", "scripts"]
+  "include": ["app", "tools", "scripts", "host", "test"]
 }
