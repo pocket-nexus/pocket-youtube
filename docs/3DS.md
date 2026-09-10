@@ -21,6 +21,13 @@ Bun, yt-dlp and FFmpeg on the Mac, Docker, and the Rust toolchain requested by
 the vendored PocketJS build. MVD decoding requires New 3DS hardware. Unsupported
 hardware produces a visible playback error.
 
+Before first playback, press **L + D-pad Down + SELECT** to open Luma3DS
+Rosalina, then choose **Miscellaneous options → Dump DSP firmware**. This
+writes `/3ds/dspfirm.cdc` from the console's firmware. Without that file or a
+Homebrew Launcher DSP handle, NDSP returns `0xd880a7fa` and playback stops at
+audio initialization. After dumping the firmware, return to the player and
+choose Retry. See the [devkitPro audio setup](https://github.com/devkitPro/3ds-examples/blob/master/audio/README.md).
+
 ```sh
 bun run setup
 bun run 3ds

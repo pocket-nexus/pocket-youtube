@@ -69,11 +69,16 @@ try:
         backup = "/pocketjs/runtime/native-backups/pocket-youtube-" + hashlib.sha256(previous).hexdigest()[:16] + ".3dsx"
         write(backup, previous)
     write(remote, data)
+    dsp_firmware = read("/3ds/dspfirm.cdc")
+    dsp_present = bool(dsp_firmware)
+    if not dsp_present:
+        print("DSP firmware is absent on SD. Before playback, open Rosalina with L + D-pad Down + SELECT, then Miscellaneous options > Dump DSP firmware.")
     receipt = {
         "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "host": args.host, "port": args.ftp_port, "remote": remote, "backup": backup,
         "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
         "pairingReadback": True, "readback": "byte-identical", "physicalPlaybackAcceptance": "pending",
+        "dspFirmwareOnSd": dsp_present,
     }
     (state / "last-deploy-3ds.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt, indent=2))
