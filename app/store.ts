@@ -46,6 +46,11 @@ export function createYoutubeStore() {
   let lastHello = -1;
 
   onHostPush((msg: HostMsg) => {
+    if (msg.t === "playback-error" && player()?.stream === msg.stream) {
+      setPlayer(null);
+      setPhase("browse");
+      setStatus(`ERROR: ${msg.message}`);
+    }
     if (msg.t === "ended") {
       const p = player();
       if (p) setPlayer({ ...p, ended: true, playing: false });

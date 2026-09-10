@@ -2,9 +2,8 @@
 //
 // The Mac owns every network protocol the PSP cannot speak: TLS, YouTube's
 // player API, adaptive formats. This module keeps that boundary to two
-// calls: search() (flat ytsearch, one JSON line per hit) and resolve() (one
-// direct progressive-mp4 URL ffmpeg can pull twice — video and audio ride
-// separate -re pipelines).
+// calls: search() (flat ytsearch, one JSON line per hit) and resolve()
+// (direct video/audio URLs for separate FFmpeg pipelines).
 //
 // The runner is injectable so tests exercise the parsing without a network
 // (memory: never .sh — Bun.spawn only).
@@ -24,8 +23,9 @@ export interface ResolvedStream {
   title: string;
   channel: string;
   durationS: number;
-  /** Direct progressive URL (video+audio muxed) for ffmpeg. */
-  url: string;
+  /** Adaptive tracks, or the same URL for a muxed fallback. */
+  videoUrl: string;
+  audioUrl: string;
   thumbnail: string;
   /** Source dimensions (0 when yt-dlp omits them) — the play pipeline
    *  letterboxes in SCREEN space, which needs the true aspect. */
@@ -37,7 +37,7 @@ export type Runner = (args: string[]) => Promise<{ ok: boolean; stdout: string; 
 
 export const spawnRunner: Runner = async (args) => {
   // The proxy rides an explicit flag (beats env-var ambiguity inside yt-dlp).
-  const proc = Bun.spawn(["yt-dlp", ...ytDlpProxyArgs(), ...args], {
+  const proc = Bun.spawn(["yt-dlp", "--ignore-config", "--js-runtimes", `bun:${process.execPath}`, ...ytDlpProxyArgs(), ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -87,23 +87,23 @@ export async function search(q: string, n = 12, run: Runner = spawnRunner): Prom
   return items;
 }
 
-/** Resolve one video to a progressive URL the ffmpeg pipelines can pull.
- *  Format 22 (720p mp4, muxed) feeds the 512-wide plane real horizontal
- *  detail; 18 (360p) is the classic progressive fallback, then anything
- *  muxed at PSP-appropriate sizes. */
+/** Decode on the Mac, so adaptive AV1/VP9 and Opus are valid sources too.
+ *  Current YouTube clients may expose no progressive formats 18/22. */
 export async function resolve(videoId: string, run: Runner = spawnRunner): Promise<ResolvedStream> {
   const res = await run([
     "--dump-json",
     "--no-playlist",
     "--no-warnings",
     "-f",
-    "22/18/best[height<=720][vcodec^=avc][acodec!=none]/best[height<=720]",
+    "bv[height<=720]+ba/b[height<=720]",
     `https://www.youtube.com/watch?v=${videoId}`,
   ]);
   if (!res.ok) throw new Error(`yt-dlp resolve failed: ${res.stderr.trim().slice(0, 300)}`);
   const j = JSON.parse(res.stdout) as Record<string, unknown>;
-  const url = typeof j.url === "string" ? j.url : "";
-  if (!url) throw new Error("yt-dlp resolve: no direct url in output");
+  const formats = Array.isArray(j.requested_formats) ? j.requested_formats as Record<string, unknown>[] : [j];
+  const video = formats.find((f) => typeof f.url === "string" && f.vcodec !== "none");
+  const audio = formats.find((f) => typeof f.url === "string" && f.acodec !== "none");
+  if (!video || !audio) throw new Error("yt-dlp resolve: no direct video/audio urls in output");
   return {
     videoId,
     title: typeof j.title === "string" ? j.title : videoId,
@@ -112,10 +112,11 @@ export async function resolve(videoId: string, run: Runner = spawnRunner): Promi
       (typeof j.uploader === "string" && j.uploader) ||
       "",
     durationS: typeof j.duration === "number" ? Math.round(j.duration) : 0,
-    url,
+    videoUrl: video.url as string,
+    audioUrl: audio.url as string,
     thumbnail: typeof j.thumbnail === "string" ? j.thumbnail : "",
-    width: typeof j.width === "number" ? j.width : 0,
-    height: typeof j.height === "number" ? j.height : 0,
+    width: typeof video.width === "number" ? video.width : 0,
+    height: typeof video.height === "number" ? video.height : 0,
   };
 }
 

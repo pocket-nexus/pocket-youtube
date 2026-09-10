@@ -175,7 +175,7 @@ export class TcpStreamSink implements StreamSink {
 export function startTcpTransport(opts: TcpTransportOptions): TcpTransport {
   const server = createServer((socket) => {
     socket.setNoDelay(true);
-    let buf = new Uint8Array(0);
+    let buf: Uint8Array = new Uint8Array(0);
     let conn: Connection | null = null;
     let lastRx = Date.now();
     let pingToken = 0;

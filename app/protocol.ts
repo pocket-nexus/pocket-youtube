@@ -53,4 +53,5 @@ export type HostMsg =
     }
   | { t: "state"; id: number; playing: boolean; position: number }
   | { t: "ended" }
+  | { t: "playback-error"; stream: string; message: string }
   | { t: "error"; id: number; message: string };

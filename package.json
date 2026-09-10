@@ -4,15 +4,16 @@
   "type": "module",
   "scripts": {
     "bootstrap": "bun vendor/pocketjs/tools/bootstrap.ts",
-    "setup": "git submodule update --init && cd vendor/pocketjs && bun install && cd ../.. && mkdir -p node_modules && ln -sfn ../vendor/pocketjs/node_modules/solid-js node_modules/solid-js && ln -sfn ../vendor/pocketjs/node_modules/opentype.js node_modules/opentype.js && ln -sfn ../vendor/pocketjs/node_modules/@napi-rs node_modules/@napi-rs && ln -sfn ../vendor/pocketjs/node_modules/bun-types node_modules/bun-types && ln -sfn ../vendor/pocketjs/node_modules/typescript node_modules/typescript",
-    "build": "bun vendor/pocketjs/tools/build.ts app/main.tsx --outdir=dist",
+    "setup": "git submodule update --init && cd vendor/pocketjs && bun install --frozen-lockfile && cd ../.. && mkdir -p node_modules && ln -sfn ../vendor/pocketjs/node_modules/solid-js node_modules/solid-js && ln -sfn ../vendor/pocketjs/node_modules/opentype.js node_modules/opentype.js && ln -sfn ../vendor/pocketjs/node_modules/@napi-rs node_modules/@napi-rs && ln -sfn ../vendor/pocketjs/node_modules/bun-types node_modules/bun-types && ln -sfn ../vendor/pocketjs/node_modules/typescript node_modules/typescript && ln -sfn ../vendor/pocketjs/node_modules/@types node_modules/@types",
+    "build": "bun vendor/pocketjs/tools/pocket.ts compile --target psp",
+    "typecheck": "bun node_modules/typescript/bin/tsc --noEmit",
     "check:platforms": "bun vendor/pocketjs/tools/pocket.ts check --target psp && bun vendor/pocketjs/tools/pocket.ts check --target vita",
     "psp": "bun scripts/psp.ts",
     "vita": "bun scripts/vita.ts",
     "serve": "bun host/serve.ts",
     "serve:vita": "bun host/serve.ts --tcp",
     "serve:proxy": "bun host/serve.ts --tcp --proxy http://127.0.0.1:7897",
-    "test": "bun test test/host.test.ts && bun test --conditions=browser test/sim.test.ts",
+    "test": "bun test test/host.test.ts test/tcp.test.ts test/media.test.ts && bun test --conditions=browser test/sim.test.ts",
     "cover": "bun tools/gen-cover.ts"
   }
 }

@@ -1,8 +1,7 @@
 // demos/youtube/host/media.ts — the play pipeline: YouTube -> .pkst rings.
 //
-// Two ffmpeg processes per session, both pulling the SAME progressive URL
-// (yt.resolve gives one muxed 360p stream; pulling it twice is simpler and
-// sturdier than demuxing one pipe, and YouTube serves ranges statelessly):
+// Two ffmpeg processes per session, pulling the resolved video/audio tracks
+// (or the same progressive URL when the source is muxed):
 //
 //   video: -re -ss S -i URL -vf fps/scale/pad -> rawvideo rgb24 pipe
 //          -> quantize (CLUT8 + dither) -> StreamWriter.writeFrame
@@ -11,7 +10,7 @@
 //
 // `-re` paces both pipes at source rate, so "the writer writes in real time"
 // falls out of ffmpeg and the device's latest-seq chase IS the play clock.
-// pause = SIGSTOP (the pipes stall, rings freeze), resume = SIGCONT,
+// pause = SIGSTOP (the pipes stall, rings freeze), resume = respawn,
 // seek = kill + respawn at the new offset + epoch bump (the device drops its
 // ring positions and re-syncs to the tail).
 //
@@ -48,11 +47,19 @@ export function planeBox(
 }
 
 export interface SessionEvents {
-  /** Pipeline ended (source exhausted or killed) — informational. */
+  /** Source exhausted after a successful decode. */
   onEnd?: (reason: string) => void;
+  /** A running stream failed; startup failures reject ready instead. */
+  onError?: (message: string) => void;
+}
+
+export interface SessionOptions {
+  startupTimeoutMs?: number;
 }
 
 export class PlaySession {
+  /** Resolves after both a video frame and an audio chunk reach the sink. */
+  readonly ready: Promise<void>;
   readonly stream: ResolvedStream;
   /** svc-relative path the app passes to videoOpen. */
   readonly relPath: string;
@@ -66,13 +73,32 @@ export class PlaySession {
   private paused = false;
   private closed = false;
   private events: SessionEvents;
+  private resolveReady!: () => void;
+  private rejectReady!: (error: Error) => void;
+  private readyResolved = false;
+  private failed = false;
+  private videoReady = false;
+  private audioReady = false;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private startupTimeoutMs: number;
 
-  constructor(stream: ResolvedStream, sink: StreamSink, events: SessionEvents = {}) {
+  constructor(stream: ResolvedStream, sink: StreamSink, events: SessionEvents = {}, options: SessionOptions = {}) {
     this.stream = stream;
     this.relPath = sink.relPath;
     this.events = events;
     this.writer = sink;
-    this.spawnAt(0);
+    this.startupTimeoutMs = options.startupTimeoutMs ?? 15_000;
+    this.ready = new Promise((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
+    // close/seek can cancel a session before its caller starts awaiting it.
+    void this.ready.catch(() => {});
+    try {
+      this.spawnAt(0);
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   private get fps(): number {
@@ -88,6 +114,23 @@ export class PlaySession {
     this.baseFrame = Math.round(seconds * this.fps);
     this.baseSample = Math.round(seconds * geo.sampleRate);
     const seek = seconds > 0 ? ["-ss", seconds.toFixed(2)] : [];
+    this.videoReady = this.audioReady = false;
+    this.startupTimer = setTimeout(() => {
+      this.fail(new Error("Timed out waiting for video and audio"));
+    }, this.startupTimeoutMs);
+    // Googlevideo can reject unbounded Range requests with HTTP 403 even
+    // when a bounded request for the same signed URL succeeds. Keep each
+    // request finite, including the probe before FFmpeg knows the file size.
+    const network = (url: string) => /^https?:\/\//.test(url)
+      ? [
+          ...ffmpegProxyArgs(),
+          "-rw_timeout", "10000000",
+          "-request_size", "1048576",
+          "-initial_request_size", "1048576",
+          "-short_seek_size", "1048576",
+          "-multiple_requests", "1",
+        ]
+      : [];
     // Letterbox in SCREEN space, not texture space: the plane's texels are
     // anamorphic (the 512x128 texture stretches to 480x272), so fitting the
     // source into the raw texture box would pillarbox 16:9 into a strip.
@@ -99,11 +142,12 @@ export class PlaySession {
         "-hide_banner",
         "-loglevel",
         "error",
+        "-xerror",
         "-re",
-        ...ffmpegProxyArgs(),
+        ...network(this.stream.videoUrl),
         ...seek,
         "-i",
-        this.stream.url,
+        this.stream.videoUrl,
         "-vf",
         // lanczos: the plane is anamorphic (wide texels), so every scrap of
         // horizontal acutance from the 720p source survives to the screen.
@@ -115,7 +159,7 @@ export class PlaySession {
         "rgb24",
         "pipe:1",
       ],
-      { stdout: "pipe", stderr: "ignore", env: { ...process.env, ...proxyEnv() } },
+      { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...proxyEnv() } },
     );
     this.audio = Bun.spawn(
       [
@@ -123,11 +167,12 @@ export class PlaySession {
         "-hide_banner",
         "-loglevel",
         "error",
+        "-xerror",
         "-re",
-        ...ffmpegProxyArgs(),
+        ...network(this.stream.audioUrl),
         ...seek,
         "-i",
-        this.stream.url,
+        this.stream.audioUrl,
         "-vn",
         "-ac",
         "2",
@@ -137,17 +182,57 @@ export class PlaySession {
         "s16le",
         "pipe:1",
       ],
-      { stdout: "pipe", stderr: "ignore", env: { ...process.env, ...proxyEnv() } },
+      { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...proxyEnv() } },
     );
-    void this.pumpVideo(this.video, this.baseFrame);
-    void this.pumpAudio(this.audio, this.baseSample);
+    const video = this.video;
+    const audio = this.audio;
+    void this.pumpVideo(video, this.baseFrame, this.readStderr(video)).catch((error) => {
+      if (video === this.video) this.fail(error);
+    });
+    void this.pumpAudio(audio, this.baseSample, this.readStderr(audio)).catch((error) => {
+      if (audio === this.audio) this.fail(error);
+    });
   }
 
-  /** NOTE on the pre-squash: ffmpeg letterboxes into the 256x128 texture
-   *  box directly. That box stretches to 480x272 (1.875x, 2.125x) — for a
-   *  16:9 source the error vs. a true screen-space letterbox is <1% (see
-   *  planeBox); acceptable against a second scale pass. */
-  private async pumpVideo(proc: Bun.Subprocess, baseFrame: number): Promise<void> {
+  private clearStartupTimer(): void {
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+  }
+
+  private mediaReady(): void {
+    if (!this.videoReady || !this.audioReady) return;
+    this.clearStartupTimer();
+    if (!this.readyResolved) {
+      this.readyResolved = true;
+      this.resolveReady();
+    }
+  }
+
+  private fail(error: unknown): void {
+    if (this.closed || this.failed) return;
+    this.failed = true;
+    this.killProcs();
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (!this.readyResolved) this.rejectReady(failure);
+    else this.events.onError?.(failure.message);
+  }
+
+  /** Drain stderr without retaining an unbounded log or exposing signed URLs. */
+  private async readStderr(proc: Bun.Subprocess): Promise<string> {
+    if (!(proc.stderr instanceof ReadableStream)) return "";
+    const decoder = new TextDecoder();
+    let tail = "";
+    for await (const part of proc.stderr as ReadableStream<Uint8Array>) {
+      tail += decoder.decode(part, { stream: true });
+      if (tail.length > 8192) {
+        tail = tail.slice(-8192);
+        tail = tail.slice(tail.indexOf("\n") + 1);
+      }
+    }
+    return tail.replace(/https?:\/\/\S+/g, "[media URL]").trim().slice(-1000);
+  }
+
+  private async pumpVideo(proc: Bun.Subprocess, baseFrame: number, stderr: Promise<string>): Promise<void> {
     const { w: planeW, h: planeH } = this.writer.geo;
     const frameBytes = planeW * planeH * 3;
     const rgba = new Uint8Array(planeW * planeH * 4);
@@ -171,18 +256,27 @@ export class PlaySession {
         const q = quantize(rgba, planeW, planeH);
         if (this.closed || proc !== this.video) return;
         this.writer.writeFrame(baseFrame + index, paletteBytes(q.palette), q.indices);
+        this.videoReady = true;
+        this.mediaReady();
         index++;
         this.framesWritten = baseFrame + index;
       }
       pending = buf.subarray(off).slice();
     }
+    const [code, detail] = await Promise.all([proc.exited, stderr]);
     if (!this.closed && proc === this.video) {
+      if (code !== 0 || index === 0) {
+        this.fail(new Error(`Video decoder failed (${code}): ${detail || "no video frames"}`));
+        return;
+      }
+      await this.ready;
+      if (this.closed || proc !== this.video) return;
       this.writer.markEnded();
       this.events.onEnd?.("video-eof");
     }
   }
 
-  private async pumpAudio(proc: Bun.Subprocess, baseSample: number): Promise<void> {
+  private async pumpAudio(proc: Bun.Subprocess, baseSample: number, stderr: Promise<string>): Promise<void> {
     const geo = this.writer.geo;
     const chunkSamples = geo.chunkFrames * geo.channels;
     let pending = new Uint8Array(0);
@@ -200,9 +294,15 @@ export class PlaySession {
         const pcm = new Int16Array(bytes.buffer, 0, chunkSamples);
         if (this.closed || proc !== this.audio) return;
         this.writer.writeAudio(baseSample + frames, pcm);
+        this.audioReady = true;
+        this.mediaReady();
         frames += geo.chunkFrames;
       }
       pending = buf.slice();
+    }
+    const [code, detail] = await Promise.all([proc.exited, stderr]);
+    if (!this.closed && proc === this.audio && (code !== 0 || frames === 0)) {
+      this.fail(new Error(`Audio decoder failed (${code}): ${detail || "no audio chunks"}`));
     }
   }
 
@@ -220,8 +320,9 @@ export class PlaySession {
   }
 
   pause(): void {
-    if (this.paused || this.closed) return;
+    if (this.paused || this.closed || this.failed) return;
     this.paused = true;
+    this.clearStartupTimer();
     this.signal("SIGSTOP"); // freeze decode+network NOW; rings stop growing
   }
 
@@ -241,15 +342,20 @@ export class PlaySession {
 
   /** Kill + respawn at `seconds`, bumping the epoch so the device resyncs. */
   seek(seconds: number): void {
-    if (this.closed) return;
+    if (this.closed || this.failed) return;
     const to = Math.max(0, Math.min(seconds, Math.max(0, this.stream.durationS - 2)));
     this.killProcs();
     this.paused = false;
     this.writer.bumpEpoch();
-    this.spawnAt(to);
+    try {
+      this.spawnAt(to);
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   private killProcs(): void {
+    this.clearStartupTimer();
     this.signal("SIGCONT"); // a stopped process cannot handle the TERM below
     for (const p of [this.video, this.audio]) p?.kill();
     this.video = null;
@@ -261,6 +367,7 @@ export class PlaySession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (!this.readyResolved) this.rejectReady(new Error("Playback cancelled"));
     this.killProcs();
     this.writer.close();
   }
