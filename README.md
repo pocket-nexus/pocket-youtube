@@ -45,7 +45,7 @@ payloads; the reader chases the tail and discards torn frames. Pause is
   (`usbhostfs_pc` on the Mac side), connected over USB
 - [Bun](https://bun.sh), [yt-dlp](https://github.com/yt-dlp/yt-dlp) and
   [ffmpeg](https://ffmpeg.org) on the Mac (`brew install yt-dlp ffmpeg`)
-- The PocketJS PSP toolchain (fetched by `bun run bootstrap` on first build)
+- The PocketJS PSP toolchain (installed by `bun run bootstrap`)
 
 ## Quick start
 
@@ -53,6 +53,7 @@ payloads; the reader chases the tail and discards torn frames. Pause is
 git clone --recursive https://github.com/pocket-stack/pocket-youtube
 cd pocket-youtube
 bun run setup        # vendor install + node_modules links
+bun run bootstrap    # install the pinned PSP toolchain if missing
 bun run psp -r       # → dist/EBOOT.PBP
 
 # terminal 1 — mount a directory on the PSP as host0:
@@ -69,12 +70,27 @@ The app boots to `CONNECT USB`, handshakes with the service through the
 mailbox, and you are searching. `△` opens the keyboard, `START` searches,
 `○` plays, `◁/▷` seek ±10 s.
 
+## PS Vita
+
+The Vita build uses the PocketJS Vita host and its TCP transport over WiFi.
+The companion sends a **512×256 CLUT8 video plane at up to 24 fps** and
+**44.1 kHz stereo PCM**. Result cards use density-2 text; the UI retains its
+480×272 logical viewport on the 960×544 display.
+
+With VitaSDK installed at `$VITASDK` or `~/vitasdk`, run:
+
+```sh
+bun run vita          # → dist/vita/main.vpk; install with VitaShell
+bun run serve:vita    # companion TCP service + discovery on the same LAN
+```
+
 ## Development
 
 ```sh
-bun run build              # bundle + pak via the pocket.json plan
-bun run test               # 12 host-pipeline tests + 9 deterministic sim journeys
-bun run check:platforms    # capability contract check (psp)
+bun run build              # PSP bundle + pak via the pocket.json plan
+bun run typecheck          # app and build-tool TypeScript
+bun run test               # host pipeline, TCP transport, and deterministic sim journeys
+bun run check:platforms    # capability + app TypeScript checks (PSP and Vita)
 bun run cover              # regenerate the XMB ICON0/PIC1 art
 ```
 
@@ -84,7 +100,17 @@ actual key layout, and one journey types by touch. No device required.
 
 PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
-only the app, the host service, and the final PSP binary.
+the app, the companion service, and the PSP/Vita build entry points.
+
+The framework is pinned to **PocketJS `061c6be1` (0.11.0)**. The PSP crate
+and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
+the PSP build passes `-O2` for the C interpreter, matching the upstream
+toolchain. After changing branches or updating the submodule pins, run
+`bun run setup` to restore the recorded revisions and locked JS dependencies.
+
+Release validation includes `bun run psp -r` and `bun run vita`. The Wasm
+journeys use a canned companion; USB/WiFi streaming, audio, and device input
+need a separate run on PSP and Vita hardware.
 
 ## License
 

@@ -49,9 +49,11 @@ const env = {
   TARGET_AR: `${llvm}/llvm-ar`,
   // Match the Rust PSP target's +noabicalls mode. -G0 avoids clang's MIPS
   // backend selecting unsupported GP-relative accesses for large C sources.
+  // CRATE_CC_NO_DEFAULTS also removes cc's optimization flag: pass -O2
+  // here so QuickJS uses the same optimized C build as the upstream host.
   TARGET_CFLAGS:
     `-target mipsel-sony-psp -mcpu=mips2 -msingle-float -mlittle-endian -mno-abicalls -fno-pic -G0 -mno-check-zero-division ` +
-    `-fno-stack-protector -I${sdk}/psp/include -I${sdk}/psp/sdk/include`,
+    `-fno-stack-protector -O2 -I${sdk}/psp/include -I${sdk}/psp/sdk/include`,
   // CRITICAL: archive MIPS objects with llvm-ar (Apple ar drops them -> undefined JS_*).
   AR_mipsel_sony_psp: `${llvm}/llvm-ar`,
   RANLIB_mipsel_sony_psp: `${llvm}/llvm-ranlib`,
