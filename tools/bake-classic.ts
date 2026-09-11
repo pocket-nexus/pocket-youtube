@@ -54,6 +54,28 @@ for(const name of ["play","pause","back","next","search","chevron","speaker"]){
     if(name==="speaker"){g.beginPath();g.moveTo(5,12);g.lineTo(11,12);g.lineTo(19,6);g.lineTo(19,26);g.lineTo(11,20);g.lineTo(5,20);g.closePath();g.fill();g.beginPath();g.arc(17,16,10,-.8,.8);g.stroke();}
   });
 }
+// Touch keyboard caps: optical sizes are fixed before packing, never stretched.
+for (const w of [28, 38, 40, 48, 78, 182]) for (const down of [false, true]) {
+  const blue = down || w === 78;
+  bake(`key-${w}${down ? "-down" : ""}`, w, 30, g => {
+    round(g,.5,1.5,w-1,28,4);g.fillStyle="#596574";g.fill();
+    round(g,.5,.5,w-1,27,4);g.fillStyle=gradient(g,28,blue ? [[0,"#85b1e8"],[.49,"#4388dc"],[.5,"#2d72c7"],[1,"#225d9f"]] : [[0,"#ffffff"],[.5,"#f6f7f9"],[1,"#d6dce3"]]);g.fill();
+    g.strokeStyle=blue ? "#426593" : "#8d97a5";g.lineWidth=1;g.stroke();
+    g.strokeStyle="rgba(255,255,255,.65)";g.beginPath();g.moveTo(4,1.5);g.lineTo(w-4,1.5);g.stroke();
+  });
+}
+bake("keyboard-bed",320,166,g=>{
+  g.fillStyle=gradient(g,166,[[0,"#d9dee5"],[.2,"#b9c0ca"],[1,"#8f99a7"]]);g.fillRect(0,0,320,166);
+  g.fillStyle="#7f8a99";g.fillRect(0,0,320,1);g.fillStyle="#f5f7fa";g.fillRect(0,1,320,1);
+});
+bake("keyboard-popup",44,54,g=>{
+  g.beginPath();g.roundRect(.5,.5,43,42,6);g.moveTo(10,40);g.lineTo(16,53);g.lineTo(28,53);g.lineTo(34,40);g.closePath();
+  g.fillStyle=gradient(g,54,[[0,"#ffffff"],[1,"#e2e7ee"]]);g.fill();g.strokeStyle="#65768a";g.lineWidth=1;g.stroke();
+});
+for (const name of ["shift", "caps", "delete"]) {
+  const icon = await loadImage(root + `artwork/keyboard/keyboard-${name}.svg`);
+  bake(`keyboard-${name}`, 32, 32, g => g.drawImage(icon, 0, 0, 32, 32));
+}
 const logo = await loadImage(root+"artwork/youtube/logo-white.svg");
 const source=createCanvas(logo.width,logo.height), sg=source.getContext("2d");sg.drawImage(logo,0,0);
 const px=sg.getImageData(0,0,logo.width,logo.height).data;

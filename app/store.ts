@@ -12,6 +12,7 @@ import { virtualFrame } from "@pocketjs/framework/clock";
 import { platform } from "@pocketjs/framework/platform";
 import { onHostPush, resolveTransport, type Transport } from "./driver.ts";
 import type { HostMsg, ResultItem } from "./protocol.ts";
+import type { SearchModel } from "./search.ts";
 import type { MediaSource } from "@pocketjs/framework/media";
 
 export interface PlayerState {
@@ -30,7 +31,7 @@ export interface PlayerState {
 
 export type Phase = "connect" | "browse" | "player";
 
-export function createYoutubeStore() {
+export function createYoutubeStore(browse?: SearchModel) {
   const [phase, setPhase] = createSignal<Phase>("connect");
   const [transport, setTransport] = createSignal<Transport>("none");
   const [query, setQuery] = createSignal("");
@@ -69,7 +70,7 @@ export function createYoutubeStore() {
     // tuned PSP defaults (host/profiles.ts).
     runEffect<HostMsg>("yt/hello", { device: { target: platform.target } }, (msg) => {
       if (msg.t === "ready") {
-        setTransport(resolveTransport());
+        setTransport(resolveTransport()); setStatus("");
         if (phase() === "connect") {
           const p = player();
           setPhase("browse");
@@ -218,6 +219,10 @@ export function createYoutubeStore() {
     seekTo,
     stopPlayback,
     reportPlayback,
+    prefetch: (first: number, visible: number, velocity: number) => browse?.prefetch(first, visible, velocity),
+    ...(browse ? { query: browse.query, setQuery: browse.setQuery, results: browse.results, searching: browse.searching,
+      hasMore: browse.hasMore, searchSerial: browse.searchSerial, status: () => status() || browse.status(),
+      search: () => { setStatus(""); browse.search(); }, loadMore: browse.loadMore } : {}),
     retryPlayback: () => { const p = player(); if (p) startPlayback(p.videoId, p.position); },
   };
 }

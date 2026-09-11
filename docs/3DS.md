@@ -96,6 +96,26 @@ that unmounts withdraws demand; its ready texture remains until cache eviction.
 Pending thumbnail polls back off from six to sixty frames. Playback commands
 use the offload client outside the resource queue, with four tickets reserved.
 
+Search pages follow Pocket Doc's query-and-offset resource identity. The
+companion owns two bounded query snapshots and streams up to twenty search
+results per fill. A page becomes readable after five rows arrive; requests for
+the same page share the snapshot. The next fill retains prior row order and
+removes duplicate video IDs. Failed fills do not advance the page position.
+
+**Scrolling predicts page demand before the end of the list.** The app requests
+one next page when three rows of base lookahead reach the loaded boundary;
+downward velocity can add five rows of lookahead. Metadata uses the same
+resource scheduler as artwork, ahead of thumbnail work. Reconnect clears page
+state for the new companion session. No selectable pagination row is mounted.
+
+The search keyboard uses Clear's contact-owned press model with baked glossy
+key caps. Character keys receive no focus state. Release clears the pressed
+cap and popup; backspace supports bounded repeat, and holding space enables
+caret dragging. The app reuses PocketJS's text-editing controller, virtual clock
+and shared hold controller. Shift, caps lock, numbers, symbols, search and
+hardware cancel remain local. Now Playing uses a baked arrow image rather than
+a Unicode icon outside the device font's coverage.
+
 PSP and Vita retain their existing color-card and stream adapters.
 
 ## Capability ownership and validation
@@ -130,3 +150,10 @@ On September 10, the user confirmed physical video and audio playback after
 the single-slice encoder correction. The subsequent classic interface update
 has separate visual and touch acceptance; that playback confirmation does not
 cover the new interface.
+
+The color correction selects `MVD_OUTPUT_BGR565`, the MVD output format used
+by the devkitPro example for the GPU's RGB565 packing. MVD's `RGB565` selection
+exchanged red and blue. The companion retains the source colors; a real H.264
+encode/decode regression checks red, green, blue, yellow and a skin-tone patch.
+Physical color and input acceptance are recorded after installing the new
+native launcher.

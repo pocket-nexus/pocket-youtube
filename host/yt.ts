@@ -124,3 +124,31 @@ export async function resolve(videoId: string, run: Runner = spawnRunner): Promi
 /** mqdefault is 320x180 — plenty for a 116x64 card slot, tiny to fetch. */
 export const thumbnailUrl = (videoId: string): string =>
   `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+
+/** Stream flat results so the first page can be read while bounded lookahead fills. */
+export async function* streamSearch(q: string, count: number, signal: AbortSignal): AsyncGenerator<SearchItem> {
+  if (signal.aborted) return;
+  const process = Bun.spawn(["yt-dlp", "--ignore-config", "--js-runtimes", `bun:${Bun.which("bun") ?? "bun"}`,
+    ...ytDlpProxyArgs(), "--dump-json", "--flat-playlist", "--no-warnings", `ytsearch${count}:${q}`],
+    { stdout: "pipe", stderr: "ignore", timeout: 60000 });
+  const abort = () => process.kill(); signal.addEventListener("abort", abort, { once: true });
+  const decoder = new TextDecoder(); let buffer = "", rows = 0;
+  try {
+    for await (const chunk of process.stdout) {
+      if (signal.aborted) return;
+      buffer += decoder.decode(chunk, { stream: true });
+      if (buffer.length > 1024 * 1024) throw new Error("Search record exceeds budget");
+      let end: number;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+        let row: SearchItem | null = null;
+        try { row = toItem(JSON.parse(line)); } catch { /* yt-dlp notices are not rows. */ }
+        if (row && /^[\w-]{11}$/.test(row.videoId)) {
+          yield { ...row, title: row.title.slice(0, 200), channel: row.channel.slice(0, 80) };
+          if (++rows >= count) return;
+        }
+      }
+    }
+    if (await process.exited && !signal.aborted) throw new Error("Search process failed");
+  } finally { signal.removeEventListener("abort", abort); process.kill(); await process.exited; }
+}

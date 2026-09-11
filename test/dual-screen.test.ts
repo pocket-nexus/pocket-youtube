@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { OSK_H, OSK_PAD, OSK_ROW_H, OSK_GAP, OSK_LAYERS, layoutRows } from "../vendor/pocketjs/framework/src/osk-layout.ts";
+import { searchKeys, type KeyboardLayer } from "../app/search-keyboard-layout.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
@@ -17,18 +17,19 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   const rowsFixture = [
     ["京都を歩く · A quiet afternoon", "Pocket travel"], ["A little jazz for your day", "Blue Note Sessions"],
     ["Inside the Nintendo 3DS", "Handheld stories"], ["Coastal road at sunset", "Weekend Films"], ["Coffee & morning light", "Slow living"],
-  ].map(([title, channel], index) => ({ videoId: `fixture000${index}`, title, channel, durationS: 120 + index * 67, views: 24000 + index * 1700, card: `fixture000${index}` }));
+  ].flatMap(row => [row, row, row]).map(([title, channel], index) => ({ videoId: `fixture${String(index).padStart(4, "0")}`, title, channel, durationS: 120 + index * 67, views: 24000 + index * 1700, card: `fixture${String(index).padStart(4, "0")}` }));
   const artworkReplies = new Map<string, any>();
   for (const [index, item] of rowsFixture.entries()) {
     artworkReplies.set(`${item.videoId}:text`, await titleArt(item));
     const canvas = createCanvas(72, 40), ctx = canvas.getContext("2d");
-    ctx.fillStyle = ["#a8cfce", "#162940", "#9086ad", "#daaa7f", "#d3bca2"][index]; ctx.fillRect(0, 0, 72, 40);
-    ctx.fillStyle = ["#56826a", "#d9a357", "#353651", "#477389", "#815844"][index];
+    ctx.fillStyle = ["#a8cfce", "#162940", "#9086ad", "#daaa7f", "#d3bca2"][index % 5]; ctx.fillRect(0, 0, 72, 40);
+    ctx.fillStyle = ["#56826a", "#d9a357", "#353651", "#477389", "#815844"][index % 5];
     for (let x = 0; x < 72; x += 10) ctx.fillRect(x, 15 + (x % 3) * 3, 8, 30);
     artworkReplies.set(`${item.videoId}:thumbnail`, thumbnailArt(new Uint8Array(ctx.getImageData(0, 0, 72, 40).data)));
   }
   const artworkRequests: string[] = [];
-  let thumbnailsReady = false;
+  let thumbnailsReady = false, pagesReadyThrough = 5;
+  const searches: { query: string; offset: number }[] = [];
   const source = { host: "127.0.0.1", port: 9000, token: "a".repeat(64) };
   const pixels = new Uint8Array(512 * 256 * 4);
   for (let y = 0; y < 256; y++) for (let x = 0; x < 512; x++) pixels.set([x / 2, y, 110, 255], (y * 512 + x) * 4);
@@ -50,6 +51,10 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
           position = data.to ?? data.position ?? 0;
           result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
         } else result = { t: "state", playing: false, position };
+      } else if (request.method === "youtube.search") {
+        searches.push(data);
+        result = data.offset >= pagesReadyThrough ? { pending: true } : { offset: data.offset,
+          items: rowsFixture.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < rowsFixture.length };
       } else if (request.method === "youtube.poll") result = { state: "done", value: jobs.get(data.job) };
       else if (request.method === "youtube.artwork") {
         const key = `${data.videoId}:${data.kind}`; artworkRequests.push(key);
@@ -87,7 +92,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     await Bun.write(`out/dual-screen/${name}-bottom.png`, encodePNG(wasm.renderAuxiliary().slice(), 320, 240));
   };
   step(20);
-  tap(24, 24, 0); expect(commands.filter(c => c.t === "search")).toHaveLength(0);
+  tap(24, 24, 0); expect(searches).toHaveLength(0);
   await capture("idle");
   // The official 37:26 play mark must survive texture padding and flex layout.
   const topPixels = wasm.render(); let left = 400, right = 0, top = 240, bottom = 0;
@@ -99,23 +104,37 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   }
   expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
   tap(24, 54); await capture("keyboard");
-  const rows = layoutRows(OSK_LAYERS.lower, 320 - 2 * OSK_PAD);
-  const key = (label: string) => {
-    for (const row of rows) for (const rect of row) if (rect.key.ch === label || rect.key.action === label) {
-      tap(OSK_PAD + rect.x + rect.w / 2, 240 - (4 * 30 + 3 * OSK_GAP + 2 * OSK_PAD) + OSK_PAD + rect.row * (30 + OSK_GAP) + 15); return;
-    }
-    throw new Error(`Missing key ${label}`);
+  const key = (label: string, layer: KeyboardLayer = "lower") => {
+    const key = searchKeys(layer).find(key => key.ch === label || key.action === label);
+    if (!key) throw new Error(`Missing key ${label}`);
+    tap(key.x + key.w / 2, key.y + 15);
   };
-  key("q"); key("enter"); step(45);
-  expect(commands.find(c => c.t === "search")?.q).toBe("q");
+  const cap = () => {
+    const pixels = wasm.renderAuxiliary(), output: number[] = [];
+    for (let y = 100; y < 130; y++) for (let x = 2; x < 30; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
+    return output;
+  };
+  const neutralCap = cap(); key("q"); expect(cap()).toEqual(neutralCap);
+  await capture("keyboard-typed");
+  key("w"); const deletion = searchKeys("lower").find(k => k.action === "delete")!;
+  step(35, deletion.x + 19, deletion.y + 15); step(); key("q"); key("w"); key(" ");
+  const space = searchKeys("lower").find(k => k.ch === " ")!;
+  step(16, space.x + 80, space.y + 15); step(1, space.x + 70, space.y + 15); step();
+  key("delete"); key("search"); step(45);
+  expect(searches[0]?.query).toBe("q");
+  expect(commands.some(c => c.t === "search" || c.t === "more")).toBe(false);
+  expect(searches.some(input => input.offset === 5)).toBe(true);
   await capture("titles-first");
   expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(1);
-  thumbnailsReady = true; step(180); await capture("results");
+  thumbnailsReady = true; pagesReadyThrough = 10; step(180); await capture("results");
   const firstTitleLoads = artworkRequests.filter(key => key === "fixture0000:text").length;
   const firstThumbLoads = artworkRequests.filter(key => key === "fixture0000:thumbnail").length;
   // Scroll far enough to unmount the first row, then return. Native textures stay cached.
-  step(1, 180, 196); step(5, 180, 92); step(); step(25);
-  step(1, 180, 92); step(5, 180, 204); step(); step(90);
+  expect(searches.some(input => input.offset === 10)).toBe(false);
+  step(1, 180, 196); for (let y = 176; y >= 76; y -= 20) step(1, 180, y); step(); step(45);
+  expect(searches.some(input => input.offset === 10)).toBe(true);
+  pagesReadyThrough = 15; step(120);
+  step(1, 180, 80); for (let y = 100; y <= 200; y += 20) step(1, 180, y); step(); step(180);
   expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(firstTitleLoads);
   expect(artworkRequests.filter(key => key === "fixture0000:thumbnail")).toHaveLength(firstThumbLoads);
   tap(120, 100); step(45); expect(opened).toBe(1);
@@ -129,7 +148,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   expect(commands.find(c => c.t === "seek")?.to).toBeCloseTo(120 * 200 / 280, 2);
   tap(137, 206); expect(volume).toBeCloseTo(.5, 2);
   const selected = opened;
-  tap(272, 20); step(20); expect(opened).toBe(selected);
+  tap(272, 20); step(20); expect(opened).toBe(selected); await capture("playing-list");
   tap(150, 226); step(10); expect(opened).toBe(selected);
   session = 0; step(15); expect(closed).toBeGreaterThan(0);
   session = 2; step(200); expect(opened).toBe(selected + 1);

@@ -5,12 +5,20 @@ import { search, resolve, thumbnailUrl, type ResolvedStream, type SearchItem } f
 import { nativeMedia } from "./native-media.ts";
 import { cardFont, drawText, fitLines, fmtDuration, fetchThumbRGBA, THUMB_W, THUMB_H } from "./cards.ts";
 
+import { createSearchPages } from "./search-pages.ts";
 import { createClassicArt } from "./classic-art.ts";
 const classicArt = createClassicArt();
 
 type Job = { state: "pending" } | { state: "done"; value: unknown } | { state: "error"; message: string };
 const jobs = new Map<number, Job>();
 const items = new Map<string, SearchItem>();
+const searchPages = createSearchPages(undefined, row => {
+  items.set(row.videoId, row);
+  if (items.size > 201) {
+    const expired = [...items.keys()].find(id => id !== resolved?.videoId);
+    if (expired) items.delete(expired);
+  }
+});
 const artwork = new Map<string, Promise<string[]>>();
 let nextJob = 1, query = "", page = 0, generation = 0;
 let resolved: ResolvedStream | undefined, active: MediaSource | undefined;
@@ -114,6 +122,10 @@ const methods = {
     let promise = artwork.get(videoId);
     if (!promise) { promise = art(videoId); artwork.set(videoId, promise); }
     return JSON.stringify({ coverage: (await promise)[strip], width: 304, height: 16 });
+  },
+  "youtube.search": (raw: string) => {
+    const { query, offset } = JSON.parse(raw);
+    return JSON.stringify(searchPages.page(query, offset));
   },
   "youtube.artwork": async (raw: string) => {
     const data = JSON.parse(raw), item = items.get(data.videoId);

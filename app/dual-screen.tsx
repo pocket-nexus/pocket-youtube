@@ -7,14 +7,15 @@ import { BTN } from "@pocketjs/framework/input";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
 import { offload } from "@pocketjs/framework/offload";
-import { TextField, type OskController } from "@pocketjs/framework/osk";
+import { createOsk } from "@pocketjs/framework/osk";
 import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
 import type { ResultItem } from "./protocol.ts";
 import { createResourceView } from "@pocketjs/framework/resource-view";
 import { ResourceImage } from "@pocketjs/framework/resource";
-import { createArtwork, rendition, type ArtworkCollection } from "./artwork.ts";
+import { SearchKeyboard } from "./search-keyboard.tsx";
+import { rendition, type ArtworkCollection } from "./artwork.ts";
 
 const BG = "#d9dde3", INK = "#283444", DIM = "#667485", BLUE = "#2676cb";
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -39,8 +40,8 @@ function Navigation(props: { title: string; children?: JSX.Element }) {
   </View>;
 }
 /** Both displays share a playback lifetime. Browsing never unmounts video. */
-export default function DualScreen(props: { store: YoutubeStore }) {
-  const artwork = createArtwork();
+export default function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
+  const artwork = props.artwork;
   const native = mediaPlayer(), top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
   const playingItem = createMemo<Pick<ResultItem, "videoId" | "title" | "channel"> | undefined>(previous => {
     const player = props.store.player();
@@ -163,10 +164,15 @@ function VolumeTile(props: { value: () => number; change: (v: number) => void })
   return <View class="absolute" style={{ insetL: 52, insetT: 204 }}><Rail width={170} ratio={props.value()} /></View>;
 }
 function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; returnToPlayer: () => void }) {
-  let keyboard: OskController | undefined;
+  const keyboard = createOsk({ value: props.store.query, setValue: props.store.setQuery, maxLength: 200, onCommit: props.store.search });
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   createEffect(() => { props.store.searchSerial(); list()?.focusRow(0); });
   onButtonPress(BTN.TRIANGLE, () => keyboard?.open());
+  onFrame(() => {
+    if (keyboard?.isOpen()) return;
+    const scroller = list()?.scroller;
+    props.store.prefetch(Math.max(0, Math.floor((scroller?.offset() ?? 0) / 64)), 3, scroller?.velocity() ?? 0);
+  });
   createResourceView(props.artwork, { demand: () => {
     const first = Math.floor((list()?.scroller.offset() ?? 0) / 64);
     return props.store.results().slice(first + 2, first + 5).flatMap(item => [
@@ -176,29 +182,30 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
   return <View style={{ width: 320, height: 240 }}>
     <Navigation title="Videos" />
     <View class="absolute" style={{ insetL: 8, insetT: 40, width: 304, height: 28 }}>
-      <TextField surface="auxiliary" theme="light" keyHeight={30} value={props.store.query} onInput={text => props.store.setQuery(text.slice(0, 200))} onSubmit={props.store.search}
-        placeholder="Search YouTube" ref={value => { keyboard = value; }}
-        class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2] focus:border-[#2676cb]" />
+      <Focusable onPress={keyboard.open} class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2]" style={{ overflow: 1 }}>
+        <Text class="text-sm" style={{ textColor: props.store.query() || keyboard.isOpen() ? INK : DIM }}>{keyboard.isOpen()
+          ? keyboard.display().slice(Math.max(0, keyboard.caret() - 32), Math.max(0, keyboard.caret() - 32) + 38)
+          : props.store.query() || "Search YouTube"}</Text>
+      </Focusable>
     </View>
     <View class="absolute" style={{ insetL: 0, insetT: 74, width: 320, height: 138 }}>
       <Show when={props.store.results().length} fallback={<View class="flex-col items-center gap-3 py-5">
         <Text class="text-sm font-bold" style={{ textColor: INK }}>{props.store.phase() === "connect" ? "Connecting…" : "Find your next video"}</Text>
         <Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Search by title, channel or topic."}</Text>
       </View>}>
-        <VirtualList surface="auxiliary" count={props.store.results().length + (props.store.hasMore() ? 1 : 0)} rowHeight={64} height={138} overscan={0}
+        <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={138} overscan={0}
           inputActive={() => !keyboard?.isOpen()} ref={setList}
-          onRowPress={index => index < props.store.results().length ? props.store.play(props.store.results()[index]) : props.store.loadMore()}
-          renderRow={index => <Show when={props.store.results()[index]} fallback={<View class="items-center py-4"><Text class="text-sm" style={{ textColor: DIM }}>{props.store.searching() ? "Loading…" : "Load more videos"}</Text></View>}>
-            <Artwork item={props.store.results()[index]} artwork={props.artwork} active={() => list()?.focusedIndex() === index} />
-          </Show>} />
+          onRowPress={index => props.store.play(props.store.results()[index])}
+          renderRow={index => <Artwork item={props.store.results()[index]} artwork={props.artwork} active={() => list()?.focusedIndex() === index} />} />
       </Show>
     </View>
     <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
       <Skin src="classic-footer.png" w={512} h={32} />
       <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Touch to play  ·  X to search"}</Text>}>
-        <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing  ▸</Text></Focusable>
+        <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
       </Show>
     </View>
+    <Show when={keyboard.isOpen()}><SearchKeyboard osk={keyboard} /></Show>
   </View>;
 }
 function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {

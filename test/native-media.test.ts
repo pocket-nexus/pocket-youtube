@@ -80,3 +80,25 @@ test("seek starts with an independent keyframe and cancellation stops both encod
   expect(first.value!.kind).toBe(1);
   abort.abort(); await iterator.return(undefined);
 }, 10000);
+
+test("companion H.264 preserves primary colors and skin-tone channel order", async () => {
+  const colors = [[230, 25, 20], [20, 220, 30], [20, 30, 230], [225, 185, 25], [215, 165, 115]];
+  const rgb = Buffer.alloc(400 * 240 * 3);
+  for (let y = 0; y < 240; y++) for (let x = 0; x < 400; x++) rgb.set(colors[Math.floor(x / 80)], (y * 400 + x) * 3);
+  const ppm = join(directory, "colors.ppm"), clip = join(directory, "colors.mp4");
+  writeFileSync(ppm, Buffer.concat([Buffer.from("P6\n400 240\n255\n"), rgb]));
+  const encode = Bun.spawn(["ffmpeg", "-v", "error", "-loop", "1", "-i", ppm, "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+    "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", clip], { stdout: "ignore", stderr: "pipe" });
+  expect(await encode.exited).toBe(0);
+  const units: Buffer[] = [];
+  for await (const packet of nativeMedia({ ...source(), width: 400, height: 240, videoUrl: clip, audioUrl: clip }, 0, new AbortController().signal))
+    if (packet.kind === 1) units.push(Buffer.from(packet.data));
+  const decode = Bun.spawn(["ffmpeg", "-v", "error", "-f", "h264", "-i", "pipe:0", "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"],
+    { stdin: new Blob([Buffer.concat(units)]), stdout: "pipe", stderr: "pipe" });
+  const pixels = new Uint8Array(await new Response(decode.stdout).arrayBuffer());
+  expect(await decode.exited).toBe(0); expect(pixels.length).toBe(512 * 256 * 3);
+  for (let patch = 0; patch < colors.length; patch++) for (let channel = 0; channel < 3; channel++) {
+    const actual = pixels[(128 * 512 + Math.floor((patch + .5) * 512 / 5)) * 3 + channel];
+    expect(Math.abs(actual - colors[patch][channel])).toBeLessThan(12);
+  }
+});

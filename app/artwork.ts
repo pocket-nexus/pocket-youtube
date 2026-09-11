@@ -9,11 +9,11 @@ export type ArtworkCollection = ResourceCollection<ArtworkInput, TextureResource
 export const rendition = (item: Pick<ResultItem, "videoId" | "title" | "channel">, kind: ArtworkInput["kind"]): ArtworkInput =>
   ({ videoId: item.videoId, kind, revision: kind === "text" ? JSON.stringify([item.title, item.channel]) : "72x40-v1" });
 
-export function createArtwork(): ArtworkCollection {
+export function createYoutubeResources() {
   const client = offload();
-  const runtime = createResourceRuntime({ maxConcurrent: 2, startsPerFrame: 1, completionsPerFrame: 1, maxCollections: 1,
+  const runtime = createResourceRuntime({ maxConcurrent: 2, startsPerFrame: 1, completionsPerFrame: 1, maxCollections: 2,
     available: () => client.connected() && client.pending() < 4 });
-  return runtime.createCollection<ArtworkInput, string, TextureResource>({
+  const artwork = runtime.createCollection<ArtworkInput, string, TextureResource>({
     key: input => `${input.videoId}:${input.kind}:${input.revision}`,
     maxEntries: 32, maxCost: 1536 * 1024, maxResponseBytes: 5000, maxViews: 12, maxDemandsPerView: 8,
     cost: input => input.kind === "text" ? 256 * 64 * 4 : 128 * 64 * 4,
@@ -34,4 +34,5 @@ export function createArtwork(): ArtworkCollection {
     },
     dispose: value => getOps().freeTexture?.(value.handle),
   });
+  return { runtime, artwork };
 }
