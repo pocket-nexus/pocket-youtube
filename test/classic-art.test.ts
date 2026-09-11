@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { createClassicArt, thumbnailArt } from "../host/classic-art.ts";
+import { cardFont, drawText, fitLines, textWidth } from "../host/cards.ts";
 import { uploadIndexedImage } from "../vendor/pocketjs/framework/src/indexed-image.ts";
 
 test("titles do not wait for thumbnails; downloads are bounded, deduplicated and cached", async () => {
@@ -24,4 +25,20 @@ test("titles do not wait for thumbnails; downloads are bounded, deduplicated and
   expect(art.thumbnail("video000000")).toEqual(thumbnail);
   expect(art.thumbnail("video000000")).toEqual(thumbnail);
   expect(downloads).toBe(2);
+});
+
+
+test("Linux fallback font shapes and rasterizes within the same measured line bounds", async () => {
+  const font = await cardFont(new URL("../vendor/pocketjs/assets/fonts/Inter-Regular.ttf", import.meta.url).pathname);
+  try {
+    expect(() => font.getAdvanceWidth("Pocket", 12)).toThrow("not yet supported");
+    const lines = fitLines("Office café · A quiet afternoon in Kyoto", 12, 192, 2);
+    expect(lines.length).toBeGreaterThan(0);
+    const rgba = new Uint8Array(192 * 36 * 4);
+    for (const [row, line] of lines.entries()) {
+      expect(textWidth(line, 12)).toBeLessThanOrEqual(192);
+      drawText(rgba, 192, 36, line, 0, 12 + row * 13, 12, [255, 255, 255]);
+    }
+    expect(rgba.some(value => value > 0)).toBe(true);
+  } finally { await cardFont(); }
 });
