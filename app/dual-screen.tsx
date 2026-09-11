@@ -189,10 +189,7 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
       </Focusable>
     </View>
     <View class="absolute" style={{ insetL: 0, insetT: 74, width: 320, height: 138 }}>
-      <Show when={props.store.results().length} fallback={<View class="flex-col items-center gap-3 py-5">
-        <Text class="text-sm font-bold" style={{ textColor: INK }}>{props.store.phase() === "connect" ? "Connecting…" : "Find your next video"}</Text>
-        <Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Search by title, channel or topic."}</Text>
-      </View>}>
+      <Show when={props.store.results().length} fallback={<SearchWelcome store={props.store} open={keyboard.open} />}>
         <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={138} overscan={0}
           inputActive={() => !keyboard?.isOpen()} ref={setList}
           onRowPress={index => props.store.play(props.store.results()[index])}
@@ -201,12 +198,36 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
     </View>
     <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
       <Skin src="classic-footer.png" w={512} h={32} />
-      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || "Touch to play  ·  X to search"}</Text>}>
+      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? "Touch to play  ·  X to search" : "Touch or press X to search")}</Text>}>
         <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
       </Show>
     </View>
     <Show when={keyboard.isOpen()}><SearchKeyboard osk={keyboard} /></Show>
   </View>;
+}
+function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
+  const state = createMemo(() => props.store.phase() === "connect" ? "connect" : props.store.searching() ? "loading"
+    : props.store.status().includes("unavailable") ? "error" : props.store.status() === "No videos found" ? "empty" : "ready");
+  const copy = () => ({
+    ready: ["Search videos", "Titles, channels and topics."],
+    connect: ["Connecting…", "Start the companion on your Mac."],
+    loading: ["Searching…", "Looking for matching videos."],
+    empty: ["No videos found", "Try another title or channel."],
+    error: ["Search unavailable", "Edit your search and try again."],
+  })[state()];
+  return <Focusable onPress={props.open} class="absolute active:opacity-80" style={{ insetL: 12, insetT: 10, width: 296, height: 108, overflow: 1 }}>
+    <Skin src="classic-search-card.png" w={512} h={128} />
+    <View class="absolute rounded-md" style={{ insetL: 12, insetT: 13, width: 42, height: 42, bgColor: "#e3eaf3", borderWidth: 1, borderColor: "#b8c5d6" }}>
+      <Image src="classic-search.png" class="absolute" style={{ insetL: 5, insetT: 5, width: 32, height: 32 }} />
+    </View>
+    <View class="absolute" style={{ insetL: 66, insetT: 17, width: 218 }}><Text class="text-sm font-bold" style={{ textColor: INK }}>{copy()[0]}</Text></View>
+    <View class="absolute" style={{ insetL: 66, insetT: 39, width: 218 }}><Text class="text-xs" style={{ textColor: DIM }}>{copy()[1]}</Text></View>
+    <View class="absolute" style={{ insetL: 14, insetT: 82 }}><Text class="text-xs font-bold" style={{ textColor: BLUE }}>{state() === "ready" ? "Tap to search" : "Edit search"}</Text></View>
+    <View class="absolute rounded-sm items-center justify-center" style={{ insetL: 236, insetT: 78, width: 22, height: 20, bgColor: "#f8f9fb", borderWidth: 1, borderColor: "#b1bccb" }}>
+      <Text class="text-xs font-bold" style={{ textColor: DIM }}>X</Text>
+    </View>
+    <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
+  </Focusable>;
 }
 function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {
   const text = () => rendition(props.item, "text"), thumbnail = () => rendition(props.item, "thumbnail");

@@ -31,6 +31,13 @@ bake("classic-footer", 320, 28, g => {
 });
 bake("classic-row",320,64,g=>{g.fillStyle=gradient(g,64,[[0,"#ffffff"],[1,"#f6f7f9"]]);g.fillRect(0,0,320,64);g.fillStyle="#ccd0d6";g.fillRect(0,63,320,1);});
 bake("classic-row-selected",320,64,g=>{g.fillStyle=gradient(g,64,[[0,"#edf5ff"],[1,"#d4e6fd"]]);g.fillRect(0,0,320,64);g.fillStyle="#9cbce4";g.fillRect(0,63,320,1);g.fillStyle="#397bd4";g.fillRect(0,0,3,63);});
+bake("classic-search-card",296,108,g=>{
+  round(g,.5,2.5,295,105,7);g.fillStyle="#b7bfcb";g.fill();
+  round(g,.5,.5,295,105,7);g.fillStyle=gradient(g,106,[[0,"#ffffff"],[.65,"#f8f9fb"],[1,"#e6ebf2"]]);g.fill();
+  g.strokeStyle="#a4afbf";g.lineWidth=1;g.stroke();
+  round(g,1.5,1.5,293,103,6);g.strokeStyle="#ffffff";g.stroke();
+  g.fillStyle="#d4dae3";g.fillRect(1,69,294,1);g.fillStyle="#ffffff";g.fillRect(1,70,294,1);
+});
 for(const [name,w,h,blue] of [["classic-button",72,56,false],["classic-play-button",144,56,true],["classic-small-button",68,26,false],["classic-wide-button",304,28,false]] as const) {
   bake(name,w,h,g=>{
     round(g,.5,1.5,w-1,h-2,6);g.fillStyle="#8f99a8";g.fill();

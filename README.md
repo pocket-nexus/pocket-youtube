@@ -2,9 +2,49 @@
 
 YouTube on PSP, PS Vita and New Nintendo 3DS, with a Mac companion.
 
-The New 3DS build separates the **400×240 video display** from the **320×240
-touch control display**. See [the 3DS guide](docs/3DS.md) for installation,
-architecture and validation limits. The PSP USB implementation is described below.
+## New Nintendo 3DS
+
+Watch on the **400×240 upper display** and use the **320×240 touch display**
+for search, browsing and playback controls. The iOS-inspired keyboard clears
+its pressed state on release; hold backspace to delete or hold space to move
+the cursor. Search results load ahead of the scroll position, with cached
+titles and thumbnails.
+
+<table>
+  <tr><th>Search and automatic loading</th><th>Playback and browsing</th></tr>
+  <tr>
+    <td><img src="docs/media/3ds-search.gif" width="400" alt="3DS UI replay: type a search on the lower-screen keyboard, then scroll through automatically loaded results" /></td>
+    <td><img src="docs/media/3ds-playback.gif" width="400" alt="3DS UI replay: pause, seek, adjust volume and browse while the upper screen continues showing video" /></td>
+  </tr>
+</table>
+
+These GIFs record the current application in the PocketJS WASM renderer with
+sample search results and a video fixture. They show the dual-screen interface;
+hardware decoding and Wi-Fi timing require a device run. Footage: **Big Buck
+Bunny**, © 2008 Blender Foundation, [CC BY 3.0](https://peach.blender.org/about/).
+[Recording source and reproduction steps](docs/media/README.md).
+
+The companion worker handles YouTube, TLS and encoding. **New 3DS MVD decodes
+H.264**, PICA200 displays video and NDSP plays audio. The device owns touch,
+scrolling, pause, volume and seek previews. Browsing keeps the video mounted;
+a scrub sends one seek when the touch ends.
+
+With homebrew, ftpd and DSP firmware set up on a New 3DS:
+
+```sh
+bun run setup
+bun run 3ds                        # → dist/3ds/pocket-youtube.3dsx
+bun run deploy:3ds --host <3DS-IP> --ftp-port 5000
+# Exit ftpd and launch Pocket YouTube from Homebrew Launcher.
+bun run serve:3ds --device <3DS-IP>
+```
+
+The Mac and console must share a LAN. The installer preserves pairing, backs
+up the previous launcher and verifies uploaded bytes. `bun run 3ds --cia`
+also builds an installable CIA. See [the 3DS guide](docs/3DS.md) for toolchain
+requirements, DSP setup, controls and the companion architecture.
+
+## PSP
 
 [<img src="https://pocketjs.dev/assets/blog/pocket-youtube-journey.gif" width="480" alt="One search-to-playback journey on a real PSP — click for the hand-held video with sound" />](https://pub-ddde9ba138d04a9a9f922aa1fda6f855.r2.dev/pocketjs/pocket-youtube-real-psp-7ae0b36c.mp4)
 
@@ -22,7 +62,7 @@ per-frame palette quantization, the GPU race that only real silicon could
 show — is on the blog: [Pocket YouTube: Streaming YouTube to a PSP over a
 USB Cable](https://pocketjs.dev/blog/pocket-youtube/).
 
-## How it works
+### How it works
 
 ```text
 Mac (host/serve.ts)                     PSP (app/, PocketJS)
@@ -43,7 +83,7 @@ to live on a filesystem. The writer publishes sequence numbers after
 payloads; the reader chases the tail and discards torn frames. Pause is
 `SIGSTOP` on ffmpeg; seek is a respawn plus an epoch bump.
 
-## Requirements
+### Requirements
 
 - A PSP with custom firmware and [PSPLINK](https://github.com/pspdev/psplinkusb)
   (`usbhostfs_pc` on the Mac side), connected over USB
@@ -58,7 +98,7 @@ payloads; the reader chases the tail and discards torn frames. Pause is
   (`ffmpeg -h protocol=http`; validated with 8.1.1).
 - The PocketJS PSP toolchain (installed by `bun run bootstrap`)
 
-## Quick start
+### Quick start
 
 ```sh
 git clone --recursive https://github.com/pocket-stack/pocket-youtube
@@ -102,6 +142,8 @@ bun run build              # PSP bundle + pak via the pocket.json plan
 bun run typecheck          # app and build-tool TypeScript
 bun run test               # host pipeline, TCP transport, and deterministic sim journeys
 bun run check:platforms    # capability + app TypeScript checks (PSP and Vita)
+bun run test:3ds           # companion media, search pages and dual-screen UI
+bun run demo:3ds           # regenerate the README GIFs with fixture services
 bun run cover              # regenerate the XMB ICON0/PIC1 art
 ```
 
@@ -119,17 +161,18 @@ separate requests.
 
 PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
-the app, the companion service, and the PSP/Vita build entry points.
+the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `061c6be1` (0.11.0)**. The PSP crate
+The framework is pinned to **PocketJS `11cb83fb`**, including native 3DS media
+and shared touch-keyboard support. The PSP crate
 and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
 the PSP build passes `-O2` for the C interpreter, matching the upstream
 toolchain. After changing branches or updating the submodule pins, run
 `bun run setup` to restore the recorded revisions and locked JS dependencies.
 
-Release validation includes `bun run psp -r` and `bun run vita`. The Wasm
+Release validation includes `bun run psp -r`, `bun run vita` and `bun run 3ds --cia`. The Wasm
 journeys use a canned companion; USB/WiFi streaming, audio, and device input
-need a separate run on PSP and Vita hardware.
+need a separate run on the corresponding hardware.
 
 ## License
 

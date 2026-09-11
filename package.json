@@ -19,6 +19,7 @@
     "test": "bun test test/host.test.ts test/tcp.test.ts test/media.test.ts && bun test --conditions=browser test/sim.test.ts",
     "test:3ds": "bun run 3ds --pocket-only && bun vendor/pocketjs/tools/wasm.ts && bun test test/native-media.test.ts test/classic-art.test.ts test/search-pages.test.ts && bun test --conditions=browser test/dual-screen.test.ts",
     "bake:classic": "bun tools/bake-classic.ts",
+    "demo:3ds": "bun run 3ds --pocket-only && bun vendor/pocketjs/tools/wasm.ts && bun tools/demo-3ds.ts",
     "cover": "bun tools/gen-cover.ts"
   }
 }

@@ -83,6 +83,10 @@ YouTube vector outlines are rasterized without changing their aspect ratio;
 `artwork/youtube/README.md` records their source and `bun run bake:classic`
 reproduces the assets.
 
+An empty list shows a recessed search card with a touch action and an X-key
+hint. The card changes its title and description while connecting, searching,
+or displaying an empty result. **Touching the card opens the search keyboard.**
+
 **Titles do not wait for thumbnail downloads.** Each title and channel uses
 one 192×36 coverage response, preserving CJK text on baked-font devices. Each
 72×40 color thumbnail uses one 16-color indexed response. Both fit the 2,500-byte

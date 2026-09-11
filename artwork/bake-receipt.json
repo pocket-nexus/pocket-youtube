@@ -29,6 +29,12 @@
     "textureWidth": 512,
     "textureHeight": 64
   },
+  "classic-search-card": {
+    "width": 296,
+    "height": 108,
+    "textureWidth": 512,
+    "textureHeight": 128
+  },
   "classic-button": {
     "width": 72,
     "height": 56,
