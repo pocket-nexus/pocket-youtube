@@ -30,6 +30,9 @@ import { loadCard, pumpDriver } from "./driver.ts";
 import Player from "./player.tsx";
 import { createYoutubeStore, type YoutubeStore } from "./store.ts";
 import type { ResultItem } from "./protocol.ts";
+import { createYoutubeResources } from "./artwork.ts";
+import { createCompanionSearch } from "./search.ts";
+import DualScreen from "./dual-screen.tsx";
 
 const INK = "#e8f0f2";
 const DIM = "#8fa3ad";
@@ -62,7 +65,9 @@ function Spinner(props: { size?: number }) {
 }
 
 export default function App() {
-  const store = createYoutubeStore();
+  const dual = hasFeature("display.auxiliary") && hasFeature("input.touch.auxiliary") && hasFeature("media.playback");
+  const resources = dual ? createYoutubeResources() : undefined;
+  const store = createYoutubeStore(resources ? createCompanionSearch(resources.runtime) : undefined);
 
   // The one per-frame pump: driver IO (svc poll + card loader) plus the
   // connect-phase retry. Registered at the root so it outlives screens.
@@ -70,6 +75,8 @@ export default function App() {
     pumpDriver();
     store.connectTick();
   });
+
+  if (resources) return <DualScreen store={store} artwork={resources.artwork} />;
 
   return (
     <View class="w-full h-full flex-col" style={{ bgColor: BG }}>
@@ -125,7 +132,7 @@ function Browse(props: { store: YoutubeStore }) {
         <View class="flex-row items-center gap-2">
           {/* Baked SVG mark (64x64 pow2 canvas, transparent bands) — glyph
               centering in a View never quite landed. */}
-          <Image src="yt-mark.svg" style={{ width: 22, height: 22 }} />
+          <Image src="yt-icon.png" style={{ width: 22, height: 22 }} />
           <Text class="text-lg font-bold tracking-wide" style={{ textColor: INK }}>
             POCKET YOUTUBE
           </Text>

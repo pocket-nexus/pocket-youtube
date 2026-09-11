@@ -19,10 +19,12 @@ import { getOps, type HostOps } from "@pocketjs/framework/host";
 import { installEffectDriver } from "@pocketjs/framework/effects";
 import { packbitsDecode, PSM } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import type { DeviceCmd, HostMsg } from "./protocol.ts";
+import { hasFeature } from "@pocketjs/framework/platform";
+import { companionConnected, companionPush, pumpCompanion, sendCompanion } from "./companion-driver.ts";
 
 const HTTP_BASE = "http://127.0.0.1:8620";
 
-export type Transport = "usb" | "http" | "none";
+export type Transport = "usb" | "http" | "companion" | "none";
 
 let transport: Transport | null = null;
 const pending = new Map<number, (msg: HostMsg) => void>();
@@ -37,6 +39,7 @@ function ops(): HostOps {
 /** Resolve (and cache) the transport. Re-probes on every call while "none"
  *  so starting the Mac service after the app recovers without a reboot. */
 export function resolveTransport(): Transport {
+  if (hasFeature("io.offload")) return companionConnected() ? "companion" : "none";
   if (transport && transport !== "none") return transport;
   const o = ops();
   if (o.svcOpen && o.svcOpen("youtube")) {
@@ -49,6 +52,7 @@ export function resolveTransport(): Transport {
 
 export function onHostPush(handler: (msg: HostMsg) => void): void {
   pushHandler = handler;
+  if (hasFeature("io.offload")) companionPush(handler);
 }
 
 function routeMsg(msg: HostMsg): void {
@@ -75,6 +79,7 @@ export function installYoutubeDriver(): void {
       ...(cmd.payload as Record<string, unknown> | undefined),
     } as DeviceCmd;
     const t = resolveTransport();
+    if (t === "companion") { sendCompanion(wire, deliver as (msg: HostMsg) => void); return; }
     if (t === "none") {
       deliver({ t: "error", id: cmd.id, message: "offline" } satisfies HostMsg);
       return;
@@ -98,6 +103,7 @@ export function installYoutubeDriver(): void {
 /** Once-per-frame pump: drain svc lines (usb), poll pushes (http), and feed
  *  the card loader. The app root calls this from onFrame. */
 export function pumpDriver(): void {
+  if (hasFeature("io.offload")) { pumpCompanion(); return; }
   frameCounter++;
   // Each svcPoll is a few usbhostfs round trips — every 5th frame keeps the
   // idle USB chatter down (same reasoning as the DevTools shim's 10) while

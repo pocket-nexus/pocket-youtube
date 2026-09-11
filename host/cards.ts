@@ -15,6 +15,7 @@
 // thumb and asserts the row bytes.
 
 import { proxyUrl } from "./proxy.ts";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { existsSync } from "node:fs";
 import { parse as parseFont, type Font } from "opentype.js";
 
@@ -35,13 +36,37 @@ const FONT_CANDIDATES = [
 ];
 
 let cachedFont: Font | null = null;
+let cachedFontPath = "", canvasFamily = "", fontSerial = 0;
 
-export async function cardFont(): Promise<Font> {
-  if (cachedFont) return cachedFont;
-  const path = FONT_CANDIDATES.find((p) => existsSync(p));
+export async function cardFont(fontPath?: string): Promise<Font> {
+  const path = fontPath ?? FONT_CANDIDATES.find((p) => existsSync(p));
   if (!path) throw new Error("cards: no usable font (looked for Arial Unicode / Inter)");
-  cachedFont = parseFont(await Bun.file(path).arrayBuffer());
-  return cachedFont;
+  if (cachedFont && cachedFontPath === path) return cachedFont;
+  const font = parseFont(await Bun.file(path).arrayBuffer());
+  let fallback = "";
+  try { font.getAdvanceWidth("Pocket", 12, { kerning: true }); }
+  catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("not yet supported")) throw error;
+    // Use the canvas shaper for fonts whose GSUB tables opentype.js cannot handle.
+    // Measurement and drawing must use the same engine, preserving line bounds.
+    fallback = `PocketCard${++fontSerial}`;
+    if (!GlobalFonts.registerFromPath(path, fallback)) throw new Error("cards: font registration failed");
+  }
+  cachedFont = font; cachedFontPath = path; canvasFamily = fallback;
+  return font;
+}
+function drawCanvasText(rgba: Uint8Array, w: number, h: number, text: string, x: number, baseline: number, size: number, color: readonly number[]) {
+  const hi = createCanvas(w * 4, h * 4), ctx = hi.getContext("2d");
+  ctx.scale(4, 4); ctx.font = `${size}px "${canvasFamily}"`;
+  ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`; ctx.fillText(text, x, baseline);
+  const lo = createCanvas(w, h), target = lo.getContext("2d"); target.drawImage(hi, 0, 0, w, h);
+  const pixels = target.getImageData(0, 0, w, h).data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const alpha = pixels[i + 3] / 255;
+    if (!alpha) continue;
+    for (let c = 0; c < 3; c++) rgba[i + c] += (pixels[i + c] - rgba[i + c]) * alpha;
+    rgba[i + 3] = 255;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +141,7 @@ export function drawText(
 ): void {
   const font = cachedFont;
   if (!font) throw new Error("cards: cardFont() must resolve before drawText");
+  if (canvasFamily) { drawCanvasText(rgba, w, h, text, x, baseline, size, color); return; }
   const segs = flatten(font, text, x, baseline, size);
   if (segs.length === 0) return;
   let minY = h;
@@ -169,6 +195,10 @@ export function drawText(
 export function textWidth(text: string, size: number): number {
   const font = cachedFont;
   if (!font) throw new Error("cards: cardFont() must resolve before textWidth");
+  if (canvasFamily) {
+    const ctx = createCanvas(1, 1).getContext("2d"); ctx.font = `${size}px "${canvasFamily}"`;
+    return ctx.measureText(text).width;
+  }
   return font.getAdvanceWidth(text, size, { kerning: true });
 }
 

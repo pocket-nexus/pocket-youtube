@@ -13,7 +13,8 @@
 // release), and a downward fling leaves the player. On PSP touches() is
 // always empty and every gesture path is inert.
 
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createMediaScrubber } from "@pocketjs/framework/media";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import { virtualFrame } from "@pocketjs/framework/clock";
 import { createGesture } from "@pocketjs/framework/gesture";
@@ -54,7 +55,7 @@ export default function Player(props: { store: YoutubeStore }) {
   // rebind the plane texture. playSerial() is the tracked trigger.
   createEffect(() => {
     props.store.playSerial();
-    const p = props.store.player();
+    const p = untrack(props.store.player);
     if (!p) return;
     setPlaneOk(ops.videoOpen?.(p.stream) ?? false);
     currentS = 0;
@@ -125,6 +126,7 @@ export default function Player(props: { store: YoutubeStore }) {
   // bar/clock live and issue ONE seek at release.
   let scrubbing = false;
   let scrubFrac = 0;
+  const scrubber = createMediaScrubber(props.store.seekTo);
   const barFrac = (x: number): number => Math.min(1, Math.max(0, (x - 12) / 456));
   createGesture({
     region: { rect: () => ({ x: 0, y: 272 - 48, w: 480, h: 48 }) },
@@ -132,11 +134,13 @@ export default function Player(props: { store: YoutubeStore }) {
     onPanStart: (c) => {
       scrubbing = true;
       scrubFrac = barFrac(c.x);
+      scrubber.begin(scrubFrac, props.store.player()?.durationS ?? 0);
       hudLeft = HUD_FRAMES;
     },
     onPanMove: (c) => {
       if (!scrubbing) return;
       scrubFrac = barFrac(c.x);
+      scrubber.move(scrubFrac, props.store.player()?.durationS ?? 0);
       hudLeft = HUD_FRAMES;
       const p = props.store.player();
       if (p && p.durationS > 0) {
@@ -147,11 +151,11 @@ export default function Player(props: { store: YoutubeStore }) {
     onPanEnd: () => {
       if (!scrubbing) return;
       scrubbing = false;
-      const p = props.store.player();
-      if (p && p.durationS > 0) props.store.seekTo(scrubFrac * p.durationS);
+      scrubber.commit();
     },
     onCancel: () => {
       scrubbing = false;
+      scrubber.cancel();
     },
   });
 

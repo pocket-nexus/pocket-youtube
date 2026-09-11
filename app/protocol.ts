@@ -7,6 +7,7 @@
 // the app's driver can route deliveries without ordering assumptions.
 
 /** Device -> host (out.jsonl / PKNT ctrl). */
+import type { MediaSource } from "@pocketjs/framework/media";
 export type DeviceCmd =
   /** `device` negotiates the stream profile: the host picks plane size,
    *  frame rate and audio rate per target (host/profiles.ts). Omitted (the
@@ -15,7 +16,7 @@ export type DeviceCmd =
   | { t: "search"; id: number; q: string }
   /** Next batch of the LAST search; replies `results` with only NEW items. */
   | { t: "more"; id: number }
-  | { t: "play"; id: number; videoId: string }
+  | { t: "play"; id: number; videoId: string; position?: number }
   | { t: "pause"; id: number }
   | { t: "resume"; id: number }
   | { t: "seek"; id: number; to: number }
@@ -50,8 +51,10 @@ export type HostMsg =
       stream: string;
       /** Seconds the stream's frame indices are based at (0 or the seek). */
       position: number;
+      source?: MediaSource;
     }
   | { t: "state"; id: number; playing: boolean; position: number }
   | { t: "ended" }
+  | { t: "offline" }
   | { t: "playback-error"; stream: string; message: string }
   | { t: "error"; id: number; message: string };
