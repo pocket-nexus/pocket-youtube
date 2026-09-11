@@ -15,6 +15,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   const globals = globalThis as Record<string, any>, replies: string[] = [], commands: any[] = [];
   let session = 1, opened = 0, closed = 0, paused = false, volume = 1, position = 0;
   let phase = "idle", job = 0, holdPlayReply = false, playFailure = "";
+  let presentedFrames = 0;
   let trackFailure = false, noCaptions = false;
   const tracks = [{ id: "ja", label: "Japanese" }, { id: "en", label: "English" }, ...Array.from({ length: 8 }, (_, i) => ({ id: `lang${i}`, label: `Language ${i}` }))];
   const trackRequests: number[] = [];
@@ -105,8 +106,8 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     },
   };
   globals.media = {
-    open: () => { opened++; phase = "playing"; paused = false; return true; },
-    openLocal: (key: string, milliseconds: number) => { localOpens.push({ key, milliseconds }); opened++; phase = "playing"; paused = false; position = milliseconds / 1000; return true; },
+    open: () => { presentedFrames = paused ? 0 : 30; opened++; phase = "playing"; paused = false; return true; },
+    openLocal: (key: string, milliseconds: number) => { localOpens.push({ key, milliseconds }); opened++; presentedFrames = 30; phase = "playing"; paused = false; position = milliseconds / 1000; return true; },
     caption: () => { const value = captionNext; captionNext = null; return value ? JSON.stringify(value) : null; },
     download: (...args: any[]) => { transfers.push(args); downloadPhase = "downloading"; return true; },
     cancelDownload: () => { downloadPhase = "cancelled"; },
@@ -116,7 +117,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     removeDownload: (key: string) => { savedEntries = savedEntries.filter(entry => entry.key !== key); libraryDirty = true; return true; }, close: () => { closed++; phase = "idle"; },
     paused: (value: boolean) => { paused = value; }, volume: (value: number) => { volume = value; }, texture: () => texture,
     status: () => JSON.stringify({ phase: paused && phase === "playing" ? "paused" : phase, positionMs: position * 1000, bufferedMs: 300,
-      decodedFrames: phase === "playing" ? 30 : 0, presentedFrames: phase === "playing" ? 30 : 0,
+      decodedFrames: phase === "playing" ? presentedFrames : 0, presentedFrames: phase === "playing" ? presentedFrames : 0,
       droppedFrames: 0, receivedBytes: 10000, decodeMaxUs: 1000, audioUnderruns: 0, hardware: true, error: "" }),
   };
   (0, eval)(await Bun.file("vendor/pocketjs/dist/3ds/guest/pocket-youtube.js").text());
@@ -225,6 +226,11 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   holdPlayReply = false; step(60);
   expect(commands.filter(c => c.t === "play").at(-1).track).toBe("en");
   expect(hasText("English · On")).toBe(true); expect(paused).toBe(true);
+  // Native receives no new frame while paused. Retain the previous picture
+  // until resume instead of hiding the video behind an endless buffering view.
+  expect(presentedFrames).toBe(0);
+  expect(wasm.render().slice((120 * 400 + 200) * 4, (120 * 400 + 200) * 4 + 3)).not.toEqual(new Uint8Array([0, 0, 0]));
+  expect(hasText("Captions update when playback resumes")).toBe(true);
   await capture("caption-applied");
   const beforeToggle = opened;
   tap(272, 20); expect(hasText("English · Off")).toBe(true);

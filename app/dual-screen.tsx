@@ -65,6 +65,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
   const [ccEnabled, setCcEnabled] = createSignal(true), [captionVisible, setCaptionVisible] = createSignal(false);
   let captionPlane: NodeMirror | undefined, captionHandle = -1;
   const [snapshot, setSnapshot] = createSignal<MediaStatus | null>(null);
+  const [pictureVisible, setPictureVisible] = createSignal(false);
   const [volume, setVolume] = createSignal(0.8);
   const [error, setError] = createSignal("");
   let plane: NodeMirror | undefined, frame = 0, lastSerial = -1;
@@ -75,7 +76,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     const player = untrack(props.store.player);
     if (!player?.source) return;
     setError(""); setSnapshot(null);
-    if (untrack(props.store.playReason) === "play") setPanel("controls");
+    if (untrack(props.store.playReason) === "play") { setPanel("controls"); setPictureVisible(false); }
     setCaptionVisible(false);
     if (captionHandle >= 0) getOps().freeTexture?.(captionHandle);
     captionHandle = -1;
@@ -88,6 +89,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     downloads.tick();
     if (++frame % 6) return;
     const status = native.status(); setSnapshot(status);
+    if (status.phase !== "opening" && status.presentedFrames > 0) setPictureVisible(true);
     const cue = native.caption();
     if (cue) {
       const previous = captionHandle;
@@ -118,7 +120,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
   return <>
     <View style={{ width: top.w, height: top.h, bgColor: "#000000" }}>
       <Image nodeRef={n => { plane = n; getOps().setImage(n.id, native.texture()); }}
-        style={{ width: top.w, height: top.h, opacity: props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0 ? 1 : 0 }} />
+        style={{ width: top.w, height: top.h, opacity: props.store.player() && pictureVisible() ? 1 : 0 }} />
       <Show when={ccEnabled() && captionVisible() && props.store.player() && !props.store.captionChange() && (snapshot()?.presentedFrames ?? 0) > 0}>
         <View class="absolute rounded-sm" style={{ insetL: 68, insetT: 200, width: 264, height: 36, bgColor: "#000000dd" }}>
           <Image nodeRef={n => { captionPlane = n; getOps().setImage(n.id, captionHandle); }} style={{ width: 256, height: 32, marginL: 4, marginT: 2 }} />
@@ -130,7 +132,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
           <Text class="text-sm" style={{ textColor: "#abb3bd" }}>Find something to watch below.</Text>
         </View>
       </Show>
-      <Show when={props.store.player() && !(snapshot()?.presentedFrames)}>
+      <Show when={props.store.player() && !pictureVisible()}>
         <View class="absolute inset-0 items-center justify-center">
           <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "PLAYBACK UNAVAILABLE" : "BUFFERING VIDEO…"}</Text>
         </View>
@@ -382,7 +384,7 @@ function CaptionPanel(props: { store: YoutubeStore; downloads: Downloads; enable
   };
   const retry = () => { const track = props.store.captionChange()?.track || player().captionTrack; if (track) choose(track); else load(offset()); };
   const heading = () => switching() ? "Switching captions…" : failure() ? "Captions unavailable" : player().hasCaptions ? `${selectedLabel()} · ${props.enabled() ? "On" : "Off"}` : "No captions for this video";
-  const hint = () => loadError() || (switching() ? "Applying your language at this position." : failure() ? "Try again, or choose another language." : loading() ? "Loading languages…" : !player().hasCaptions ? local() ? "This copy was saved without captions." : "No language or subtitle file is available." : local() ? "Included with your offline video." : props.enabled() ? "Choose a language. Captions appear above." : "Captions hidden. Your language is kept.");
+  const hint = () => loadError() || (switching() ? "Applying your language at this position." : failure() ? "Try again, or choose another language." : loading() ? "Loading languages…" : !player().hasCaptions ? local() ? "This copy was saved without captions." : "No language or subtitle file is available." : !props.enabled() ? "Captions hidden. Your language is kept." : local() ? "Included with your offline video." : !player().playing ? "Captions update when playback resumes." : "Choose a language. Captions appear above.");
   return <View style={{ width: 320, height: 240 }}>
     <Navigation title="Captions"><Tile x={8} y={5} w={56} h={26} label="Back" onPress={props.back} />
       <Tile x={244} y={5} w={68} h={26} label={props.enabled() && player().hasCaptions ? "CC on" : "CC off"} disabled={!player().hasCaptions || switching()} onPress={props.toggle} /></Navigation>

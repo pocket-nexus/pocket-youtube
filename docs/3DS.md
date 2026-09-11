@@ -76,6 +76,8 @@ The default track prefers source-language subtitles, with an automatic track
 as fallback. **Language selection preserves playback position and pause state**.
 The panel stays open while the language is applied, marks the selected track,
 and offers Retry after failure. CC off hides captions and keeps the selection.
+Changing language while paused retains the last video frame; caption display
+updates when playback resumes.
 Track loading retries on reconnect; videos without captions show an empty state.
 Saving opens progress; Done returns to the caption panel and shows Saved on SD.
 Back and the B button return through file details, downloads and captions in order.
