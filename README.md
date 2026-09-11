@@ -169,7 +169,7 @@ PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `a3bff9d3`**, including native 3DS media, an SD download worker, local seeking,
+The framework is pinned to **PocketJS `3b39f4d3`**, including native 3DS media, an SD download worker, local seeking,
 timed captions and shared touch-keyboard support. **This build requires a new
 3DS launcher with host ABI 11.** The PSP crate
 and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
