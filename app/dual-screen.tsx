@@ -6,7 +6,7 @@ import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
-import { offload } from "@pocketjs/framework/offload";
+import { offload, uploadCoverage } from "@pocketjs/framework/offload";
 import { createOsk } from "@pocketjs/framework/osk";
 import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
@@ -16,6 +16,7 @@ import { createResourceView } from "@pocketjs/framework/resource-view";
 import { ResourceImage } from "@pocketjs/framework/resource";
 import { SearchKeyboard } from "./search-keyboard.tsx";
 import { rendition, type ArtworkCollection } from "./artwork.ts";
+import { createDownloads, type Downloads } from "./downloads.ts";
 
 const BG = "#d9dde3", INK = "#283444", DIM = "#667485", BLUE = "#2676cb";
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -49,7 +50,10 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     return props.store.results().find(row => row.videoId === player.videoId)
       ?? (previous?.videoId === player.videoId ? previous : { videoId: player.videoId, title: player.title, channel: "" });
   });
-  const [panel, setPanel] = createSignal<"controls" | "browse">("browse");
+  const downloads = createDownloads();
+  const [panel, setPanel] = createSignal<"controls" | "browse" | "downloads" | "captions">("browse");
+  const [ccEnabled, setCcEnabled] = createSignal(true), [captionVisible, setCaptionVisible] = createSignal(false);
+  let captionPlane: NodeMirror | undefined, captionHandle = -1;
   const [snapshot, setSnapshot] = createSignal<MediaStatus | null>(null);
   const [volume, setVolume] = createSignal(0.8);
   const [error, setError] = createSignal("");
@@ -66,8 +70,17 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     if (plane) getOps().setImage(plane.id, native.texture());
   });
   onFrame(() => {
+    downloads.tick();
     if (++frame % 6) return;
     const status = native.status(); setSnapshot(status);
+    const cue = native.caption();
+    if (cue) {
+      const previous = captionHandle;
+      captionHandle = "coverage" in cue ? uploadCoverage(cue.coverage, cue.width, cue.height, 0xffffffff) ?? -1 : -1;
+      if (captionPlane) getOps().setImage(captionPlane.id, captionHandle);
+      setCaptionVisible(captionHandle >= 0);
+      if (previous >= 0) getOps().freeTexture?.(previous);
+    }
     if (status.phase === "error") setError(status.error);
     const p = props.store.player();
     if (p && status.phase !== "opening" && status.phase !== "idle" && status.phase !== "error")
@@ -75,7 +88,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     if (frame % 120 === 0 && p && offload().connected())
       offload().request("youtube.metrics", JSON.stringify(status), () => {});
   });
-  onCleanup(() => native.close());
+  onCleanup(() => { native.close(); if (captionHandle >= 0) getOps().freeTexture?.(captionHandle); });
   const changeVolume = (value: number) => { setVolume(Math.max(0, Math.min(1, value))); native.volume(volume()); };
   const playPause = () => props.store.player()?.ended ? props.store.seekTo(0) : props.store.togglePause();
   const stop = () => { native.close(); props.store.stopPlayback(); setPanel("browse"); setError(""); };
@@ -83,12 +96,19 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
   onButtonPress(BTN.LTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) - 10));
   onButtonPress(BTN.RTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) + 10));
   onButtonPress(BTN.CROSS, () => panel() === "browse" && props.store.player() ? setPanel("controls") : setPanel("browse"));
+  createGesture({ surface: "auxiliary", region: { rect: () => panel() === "controls" ? { x: 0, y: 36, w: 320, h: 48 } : null },
+    onLongPress: () => { const p = props.store.player(); if (p) { downloads.start(p, p.captionTrack); setPanel("downloads"); } } });
   const position = () => props.store.player()?.position ?? 0;
   const duration = () => props.store.player()?.durationS ?? 0;
   return <>
     <View style={{ width: top.w, height: top.h, bgColor: "#000000" }}>
       <Image nodeRef={n => { plane = n; getOps().setImage(n.id, native.texture()); }}
         style={{ width: top.w, height: top.h, opacity: props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0 ? 1 : 0 }} />
+      <Show when={ccEnabled() && captionVisible() && props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0}>
+        <View class="absolute rounded-sm" style={{ insetL: 68, insetT: 200, width: 264, height: 36, bgColor: "#000000dd" }}>
+          <Image nodeRef={n => { captionPlane = n; getOps().setImage(n.id, captionHandle); }} style={{ width: 256, height: 32, marginL: 4, marginT: 2 }} />
+        </View>
+      </Show>
       <Show when={!props.store.player()}>
         <View class="absolute inset-0 items-center justify-center flex-col gap-3">
           <View style={{ width: 220, height: 49, overflow: 1 }}><Skin src="yt-logo-white.png" w={256} h={64} /></View>
@@ -103,8 +123,11 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     </View>
     <AuxiliarySurface>{() => <View style={{ width: bottom.width, height: bottom.height, bgColor: BG }}>
       <Skin src="classic-linen.png" w={512} h={256} />
-      <Show when={panel() === "controls" && props.store.player()} fallback={<Browser store={props.store} artwork={artwork} returnToPlayer={() => setPanel("controls")} />}>
-        <Navigation title="Now Playing"><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
+      <Show when={panel() === "controls" && props.store.player()} fallback={<Show when={panel() === "downloads"} fallback={<Show when={panel() === "captions"}
+        fallback={<Browser store={props.store} artwork={artwork} downloads={downloads} openDownloads={() => setPanel("downloads")} returnToPlayer={() => setPanel("controls")} />}>
+        <CaptionPanel store={props.store} downloads={downloads} enabled={ccEnabled} toggle={() => setCcEnabled(!ccEnabled())} back={() => setPanel("controls")} showDownloads={() => setPanel("downloads")} />
+      </Show>}><DownloadPanel store={props.store} downloads={downloads} back={() => setPanel("browse")} /></Show>}>
+        <Navigation title="Now Playing"><Tile x={8} y={5} w={48} h={26} label="CC" onPress={() => setPanel("captions")} /><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
         <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><Artwork item={playingItem()!} artwork={artwork} compact /></View>
         <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "Buffering…" : "")} />
         <Tile x={8} y={124} w={72} h={56} label="10 sec" icon="classic-back.png" onPress={() => props.store.seekTo(position() - 10)} />
@@ -163,7 +186,7 @@ function VolumeTile(props: { value: () => number; change: (v: number) => void })
     onDown: c => props.change((c.x - 52) / 170), onMove: c => props.change((c.x - 52) / 170) });
   return <View class="absolute" style={{ insetL: 52, insetT: 204 }}><Rail width={170} ratio={props.value()} /></View>;
 }
-function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; returnToPlayer: () => void }) {
+function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; downloads: Downloads; openDownloads: () => void; returnToPlayer: () => void }) {
   const keyboard = createOsk({ value: props.store.query, setValue: props.store.setQuery, maxLength: 200, onCommit: props.store.search });
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   createEffect(() => { props.store.searchSerial(); list()?.focusRow(0); });
@@ -180,7 +203,7 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
     ]);
   } });
   return <View style={{ width: 320, height: 240 }}>
-    <Navigation title="Videos" />
+    <Navigation title="Videos"><Tile x={236} y={5} w={76} h={26} label="Saved" onPress={props.openDownloads} /></Navigation>
     <View class="absolute" style={{ insetL: 8, insetT: 40, width: 304, height: 28 }}>
       <Focusable onPress={keyboard.open} class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2]" style={{ overflow: 1 }}>
         <Text class="text-sm" style={{ textColor: props.store.query() || keyboard.isOpen() ? INK : DIM }}>{keyboard.isOpen()
@@ -192,13 +215,18 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
       <Show when={props.store.results().length} fallback={<SearchWelcome store={props.store} open={keyboard.open} />}>
         <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={138} overscan={0}
           inputActive={() => !keyboard?.isOpen()} ref={setList}
-          onRowPress={index => props.store.play(props.store.results()[index])}
+          onRowPress={index => {
+            const item = props.store.results()[index], saved = props.downloads.entries().find(entry => entry.key === item.videoId && entry.video);
+            if (saved) props.store.playLocal(saved); else props.store.play(item);
+          }}
+          onRowLongPress={index => { const item = props.store.results()[index]; props.downloads.start(item,
+            props.store.player()?.videoId === item.videoId ? props.store.player()?.captionTrack : undefined); props.openDownloads(); }}
           renderRow={index => <Artwork item={props.store.results()[index]} artwork={props.artwork} active={() => list()?.focusedIndex() === index} />} />
       </Show>
     </View>
     <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
       <Skin src="classic-footer.png" w={512} h={32} />
-      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? "Touch to play  ·  X to search" : "Touch or press X to search")}</Text>}>
+      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? "Tap to play · Hold to save · X search" : "Touch or press X to search")}</Text>}>
         <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
       </Show>
     </View>
@@ -228,6 +256,91 @@ function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
     </View>
     <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
   </Focusable>;
+}
+function DownloadPanel(props: { store: YoutubeStore; downloads: Downloads; back: () => void }) {
+  const d = props.downloads;
+  const [selected, setSelected] = createSignal<string | null>(null);
+  const label = () => ({ resolving: "Finding video…", captions: "Preparing captions…", encoding: "Converting video",
+    ready: "Preparing transfer…", connecting: "Connecting to download…", downloading: "Saving to SD card", verifying: "Verifying SD card…",
+    complete: "Saved on SD card", cancelled: "Cancelled", error: "Download failed", idle: "" })[d.phase()] ?? d.phase();
+  const active = () => d.phase() !== "idle";
+  return <View style={{ width: 320, height: 240 }}>
+    <Navigation title="Saved on SD"><Tile x={8} y={5} w={56} h={26} label="Back" onPress={props.back} /></Navigation>
+    <Show when={active()}>
+      <View class="absolute" style={{ insetL: 12, insetT: 42, width: 296, height: 66 }}>
+        <Text class="text-xs font-bold" style={{ textColor: INK }}>{label()}{["encoding", "downloading"].includes(d.phase()) ? ` ${Math.floor(d.progress() * 100)}%` : ""}</Text>
+        <View class="absolute" style={{ insetT: 18, width: 210, height: 16, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM }}>{d.message() || d.title()}</Text></View>
+        <View class="absolute rounded-sm" style={{ insetT: 43, width: 212, height: 7, bgColor: "#aab5c2" }}>
+          <View class="rounded-sm" style={{ width: 212 * Math.max(0, Math.min(1, d.progress())), height: 7, bgColor: BLUE }} />
+        </View>
+      </View>
+      <Tile x={238} y={66} w={70} h={26} label={d.busy() ? "Cancel" : "Done"} onPress={() => d.busy() ? d.cancel() : d.dismiss()} />
+    </Show>
+    <View class="absolute" style={{ insetL: 0, insetT: active() ? 112 : 42, width: 320, height: active() ? 98 : 168 }}>
+      <Show when={d.entries().length} fallback={<View class="items-center justify-center" style={{ width: 320, height: 90 }}>
+        <Text class="text-xs" style={{ textColor: DIM }}>Hold a video to save it here.</Text>
+      </View>}>
+        <VirtualList surface="auxiliary" count={d.entries().length} rowHeight={48} height={active() ? 98 : 168} overscan={0}
+          onRowPress={index => { const item = d.entries()[index]; if (item.video) props.store.playLocal(item); else setSelected(item.key); }}
+          onRowLongPress={index => setSelected(d.entries()[index].key)}
+          renderRow={index => { const item = () => d.entries()[index]; return <View class="flex-col" style={{ width: 320, height: 48, paddingL: 12, paddingT: 5, bgColor: "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1 }}>
+            <Text class="text-sm" style={{ textColor: INK, width: 296 }}>{item().title}</Text>
+            <Text class="text-xs" style={{ textColor: DIM }}>{item().video ? `${time(item().durationMs / 1000)} · ${(item().bytes / 1048576).toFixed(1)} MB` : "Captions only"}{item().captions ? ` · CC ${item().language}` : ""}</Text>
+          </View>; }} />
+      </Show>
+    </View>
+    <View class="absolute" style={{ insetL: 12, insetT: 221 }}><Text class="text-xs" style={{ textColor: DIM }}>Play offline · Hold saved item to delete</Text></View>
+    <Show when={selected()}>
+      <View class="absolute inset-0 items-center justify-center flex-col gap-3" style={{ bgColor: BG }}>
+        <Text class="text-sm" style={{ textColor: INK }}>Delete this saved item from SD?</Text>
+        <Focusable onPress={() => { const key = selected()!; if (props.store.player()?.stream === key) { mediaPlayer().close(); props.store.stopPlayback(); } d.remove(key); setSelected(null); }} class="rounded-lg px-6 py-3 bg-[#a63838]"><Text class="text-sm text-white">Delete</Text></Focusable>
+        <Focusable onPress={() => setSelected(null)} class="rounded-lg px-6 py-3 bg-[#667485]"><Text class="text-sm text-white">Keep</Text></Focusable>
+      </View>
+    </Show>
+  </View>;
+}
+function CaptionPanel(props: { store: YoutubeStore; downloads: Downloads; enabled: () => boolean; toggle: () => void; back: () => void; showDownloads: () => void }) {
+  const [tracks, setTracks] = createSignal<{ id: string; label: string }[]>([]), [more, setMore] = createSignal(false), [message, setMessage] = createSignal("");
+  const [offset, setOffset] = createSignal(0);
+  const player = () => props.store.player()!;
+  const local = () => !!player()?.source && "file" in player().source!;
+  let disposed = false;
+  onCleanup(() => { disposed = true; });
+  const load = (offset: number) => {
+    if (local()) { setMessage(player().hasCaptions ? `Saved captions: ${player().captionLabel}` : "No captions saved with this video"); return; }
+    setMessage("Loading tracks…");
+    const request = offload().request("youtube.caption-tracks", JSON.stringify({ videoId: player().videoId, offset }), result => {
+      if (disposed) return;
+      if (!result.ok) { setMessage("Connect companion to load captions"); return; }
+      const reply = JSON.parse(result.value); setTracks(reply.tracks); setMore(reply.more); setOffset(offset);
+      setMessage(player().captionError || (reply.tracks.length ? "Tap a language to play with captions" : "No captions available"));
+    });
+    if (!request) setMessage("Companion busy; reopen CC to retry");
+  };
+  load(0);
+  return <View style={{ width: 320, height: 240 }}>
+    <Navigation title="Captions"><Tile x={8} y={5} w={56} h={26} label="Back" onPress={props.back} />
+      <Tile x={244} y={5} w={68} h={26} label={props.enabled() ? "CC on" : "CC off"} onPress={props.toggle} /></Navigation>
+    <View class="absolute" style={{ insetL: 12, insetT: 43, width: 296, height: 26, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM }}>{message()}</Text></View>
+    <View class="absolute" style={{ insetL: 0, insetT: 70, width: 320, height: 100 }}>
+      <VirtualList surface="auxiliary" count={tracks().length} rowHeight={32} height={100} overscan={0}
+        onRowPress={index => { const track = tracks()[index]; props.store.selectCaption(track.id); props.back(); }}
+        renderRow={index => <View style={{ width: 320, height: 32, paddingL: 12, paddingT: 7, bgColor: "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1 }}>
+          <Text class="text-xs" style={{ textColor: INK }}>{tracks()[index].id === player().captionTrack ? "✓ " : ""}{tracks()[index].label}</Text>
+        </View>} />
+    </View>
+    <Show when={!local()}>
+      <Show when={offset() > 0}><Tile x={8} y={178} w={68} h={26} label="Previous" onPress={() => load(Math.max(0, offset() - 8))} /></Show>
+      <Show when={more()}><Tile x={244} y={178} w={68} h={26} label="More" onPress={() => load(offset() + 8)} /></Show>
+      <Show when={player().hasCaptions}>
+        <Focusable onPress={() => { if (!props.downloads.busy()) props.downloads.start(player(), player().captionTrack, true); props.showDownloads(); }}
+          class="absolute rounded-md items-center justify-center" style={{ insetL: 84, insetT: 178, width: 152, height: 26, bgColor: "#f4f7fb", borderWidth: 1, borderColor: "#9aa5b2" }}>
+          <Text class="text-xs font-bold" style={{ textColor: INK }}>Save captions to SD</Text>
+        </Focusable>
+      </Show>
+    </Show>
+    <View class="absolute" style={{ insetL: 12, insetT: 219 }}><Text class="text-xs" style={{ textColor: DIM }}>{local() ? "CC works without the companion" : player().captionLabel || "Original language selected by default"}</Text></View>
+  </View>;
 }
 function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {
   const text = () => rendition(props.item, "text"), thumbnail = () => rendition(props.item, "thumbnail");

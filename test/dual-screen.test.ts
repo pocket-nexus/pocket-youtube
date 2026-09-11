@@ -5,6 +5,7 @@ import { searchKeys, type KeyboardLayer } from "../app/search-keyboard-layout.ts
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
+import { captionPackets } from "../host/captions.ts";
 import { mkdirSync } from "node:fs";
 
 test("auxiliary keyboard, playback controls, local scrubbing and reconnect use the complete app", async () => {
@@ -12,7 +13,13 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   wasm.createAuxiliarySurface(320, 240);
   const globals = globalThis as Record<string, any>, replies: string[] = [], commands: any[] = [];
   let session = 1, opened = 0, closed = 0, paused = false, volume = 1, position = 0;
-  let phase = "idle", job = 0;
+  let phase = "idle", job = 0, holdPlayReply = false;
+  let downloadJob = 0, preparingReady = false, downloadPhase = "idle", downloadProgress = 0, libraryDirty = true;
+  let savedEntries: any[] = [], captionNext: any = null;
+  const downloadCommands: any[] = [], localOpens: any[] = [], transfers: any[] = [];
+  const captionIterator = captionPackets({ cues: [{ startMs: 0, endMs: 120000, text: "こんにちは 世界 · offline captions" }], vtt: "" }, 0);
+  const captionPacket = (await captionIterator.next()).value!; await captionIterator.return(undefined);
+  const caption = { width: 256, height: 32, endMs: 120000, coverage: Buffer.from(captionPacket.data.subarray(8)).toString("base64") };
   const jobs = new Map<number, any>();
   const rowsFixture = [
     ["京都を歩く · A quiet afternoon", "Pocket travel"], ["A little jazz for your day", "Blue Note Sessions"],
@@ -49,13 +56,18 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
           result = { job: ++job }; jobs.set(job, { t: "results", items: rowsFixture });
         } else if (data.t === "play" || data.t === "seek") {
           position = data.to ?? data.position ?? 0;
-          result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
+          result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position, hasCaptions: true, captionTrack: data.track ?? "ja", captionLabel: "Japanese" });
         } else result = { t: "state", playing: false, position };
-      } else if (request.method === "youtube.search") {
+      } else if (request.method === "youtube.download") {
+        downloadCommands.push(data);
+        if (data.operation === "start") { downloadJob++; preparingReady = false; }
+        result = data.operation === "cancel" ? { phase: "cancelled" } : { job: downloadJob, phase: preparingReady ? "ready" : "encoding", ratio: .45, key: "fixture0000", source, bytes: 100000, captions: "ja" };
+      } else if (request.method === "youtube.caption-tracks") result = { tracks: [{ id: "ja", label: "Japanese" }, { id: "en", label: "English" }], more: false };
+      else if (request.method === "youtube.search") {
         searches.push(data);
         result = data.offset >= pagesReadyThrough ? { pending: true } : { offset: data.offset,
           items: rowsFixture.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < rowsFixture.length };
-      } else if (request.method === "youtube.poll") result = { state: "done", value: jobs.get(data.job) };
+      } else if (request.method === "youtube.poll") result = holdPlayReply && jobs.get(data.job)?.t === "playing" ? { state: "pending" } : { state: "done", value: jobs.get(data.job) };
       else if (request.method === "youtube.artwork") {
         const key = `${data.videoId}:${data.kind}`; artworkRequests.push(key);
         result = data.kind === "thumbnail" && !thumbnailsReady ? { pending: true } : artworkReplies.get(key);
@@ -70,7 +82,15 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     },
   };
   globals.media = {
-    open: () => { opened++; phase = "playing"; return true; }, close: () => { closed++; phase = "idle"; },
+    open: () => { opened++; phase = "playing"; paused = false; return true; },
+    openLocal: (key: string, milliseconds: number) => { localOpens.push({ key, milliseconds }); opened++; phase = "playing"; paused = false; position = milliseconds / 1000; return true; },
+    caption: () => { const value = captionNext; captionNext = null; return value ? JSON.stringify(value) : null; },
+    download: (...args: any[]) => { transfers.push(args); downloadPhase = "downloading"; return true; },
+    cancelDownload: () => { downloadPhase = "cancelled"; },
+    downloadStatus: () => JSON.stringify({ phase: downloadPhase, receivedBytes: downloadProgress, totalBytes: 100000, error: "" }),
+    refreshLibrary: () => true,
+    library: () => { if (!libraryDirty) return null; libraryDirty = false; return JSON.stringify(savedEntries); },
+    removeDownload: (key: string) => { savedEntries = savedEntries.filter(entry => entry.key !== key); libraryDirty = true; return true; }, close: () => { closed++; phase = "idle"; },
     paused: (value: boolean) => { paused = value; }, volume: (value: number) => { volume = value; }, texture: () => texture,
     status: () => JSON.stringify({ phase: paused && phase === "playing" ? "paused" : phase, positionMs: position * 1000, bufferedMs: 300,
       decodedFrames: phase === "playing" ? 30 : 0, presentedFrames: phase === "playing" ? 30 : 0,
@@ -153,4 +173,38 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   session = 0; step(15); expect(closed).toBeGreaterThan(0);
   session = 2; step(200); expect(opened).toBe(selected + 1);
   expect(commands.filter(c => c.t === "play").at(-1).position).toBeCloseTo(position, 2);
+  captionNext = caption; step(12); await capture("captions-online");
+  tap(30, 20); step(20); await capture("caption-tracks");
+  tap(130, 116); step(60); expect(commands.filter(c => c.t === "play").at(-1).track).toBe("en");
+  tap(272, 20); step(20);
+  const beforeHold = commands.filter(c => c.t === "play").length;
+  step(40, 120, 100); step(); step(60);
+  expect(downloadCommands.filter(c => c.operation === "start")).toHaveLength(1);
+  expect(commands.filter(c => c.t === "play")).toHaveLength(beforeHold);
+  await capture("download-encoding");
+  preparingReady = true; step(60); expect(transfers).toHaveLength(1);
+  downloadProgress = 54000; step(12); await capture("download-to-sd");
+  downloadPhase = "complete"; downloadProgress = 100000;
+  savedEntries = [{ key: "fixture0000", title: "Saved travel film", language: "ja", durationMs: 120000, bytes: 100000, video: true, captions: true }]; libraryDirty = true;
+  step(12); await capture("download-complete");
+  session = 0; step(20);
+  const disconnectedCommands = commands.length;
+  tap(120, 134); step(20); expect(localOpens).toHaveLength(1);
+  captionNext = caption; step(12); await capture("captions-offline");
+  tap(160, 150); expect(paused).toBe(true); tap(160, 150); expect(paused).toBe(false);
+  step(1, 60, 108); step(5, 220, 108); step(); step(20);
+  expect(localOpens).toHaveLength(2); expect(localOpens.at(-1).milliseconds).toBeCloseTo(120000 * 200 / 280, 0);
+  expect(commands).toHaveLength(disconnectedCommands);
+  const closesBeforeReconnect = closed;
+  session = 3; step(200); expect(localOpens).toHaveLength(2); expect(closed).toBe(closesBeforeReconnect);
+  tap(30, 20); step(20); await capture("captions-offline-options");
+  tap(272, 20); step(12); await capture("captions-disabled");
+  expect(commands.filter(c => c.t === "play")).toHaveLength(beforeHold);
+  // An old remote reply must not gain ownership of a newer local player.
+  tap(30, 20); tap(272, 20); step(60); holdPlayReply = true;
+  tap(120, 174); step(30); tap(272, 20); step(10); tap(120, 134); step(20);
+  const localBeforeStaleReply = localOpens.length, opensBeforeStaleReply = opened, closesBeforeStaleReply = closed;
+  holdPlayReply = false; step(80); expect(opened).toBe(opensBeforeStaleReply);
+  session = 0; step(30); expect(closed).toBe(closesBeforeStaleReply); expect(localOpens).toHaveLength(localBeforeStaleReply);
+
 }, 30000);
