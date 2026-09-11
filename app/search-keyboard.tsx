@@ -14,13 +14,13 @@ const CAPS: Record<number, [string, string, number]> = {
 /** Character keys own a contact, never focus. Clear's hold controller owns repeats/trackpad. */
 export function SearchKeyboard(props: { osk: OskController }) {
   const [layer, setLayer] = createSignal<KeyboardLayer>("lower"), [locked, setLocked] = createSignal(false);
-  const [pressed, setPressed] = createSignal(""), [popup, setPopup] = createSignal<SearchKey>();
+  const [pressed, setPressed] = createSignal("");
   const [tracking, setTracking] = createSignal(false);
   const keys = createMemo(() => searchKeys(layer()));
   let owner = -1, shiftAt = -10, previous = 0, firstFrame = true;
   onCleanup(pushButtonHandlerBlock()); onCleanup(pushTouchBlock());
   const touch = createKeyboardTouch({ space: () => props.osk.insert(" "), backspace: props.osk.backspace,
-    caret: props.osk.moveCaret, trackpad: active => { setTracking(active); if (active) setPopup(undefined); } });
+    caret: props.osk.moveCaret, trackpad: setTracking });
   onCleanup(() => touch.cancel());
   function shift() {
     const now = virtualNow();
@@ -39,7 +39,7 @@ export function SearchKeyboard(props: { osk: OskController }) {
   }
   const release = (id: number, cancelled = false) => {
     touch.release(id, cancelled);
-    if (owner === id) { owner = -1; setPressed(""); setPopup(undefined); }
+    if (owner === id) { owner = -1; setPressed(""); }
   };
   createGesture({ surface: "auxiliary", allowWhenBlocked: true, tapSlop: 9999,
     region: { rect: () => ({ x: 0, y: 74, w: 320, h: 166 }) },
@@ -47,7 +47,7 @@ export function SearchKeyboard(props: { osk: OskController }) {
       const key = searchKeyAt(keys(), c.x, c.y); if (!key) return;
       if (!touch.begin(c.id, c.x, c.y, key.action === "delete" ? "backspace" : key.ch === " " ? "space" : "other",
         { x: key.x, y: key.y, w: key.w, h: KEY_HEIGHT }, virtualNow())) return;
-      owner = c.id; setPressed(key.id); setPopup(key.ch && key.ch !== " " ? key : undefined); activate(key);
+      owner = c.id; setPressed(key.id); activate(key);
     },
     onMove(c) { touch.move(c.id, c.x, c.y); }, onUp: c => release(c.id), onCancel: c => release(c.id, true),
   });
@@ -80,9 +80,5 @@ export function SearchKeyboard(props: { osk: OskController }) {
         </Show>
       </View>;
     }}</For>
-    <Show when={popup()}>{key => <View class="absolute" style={{ insetL: Math.max(0, Math.min(276, key().x + key().w / 2 - 22)), insetT: key().y - 74 - 43, width: 44, height: 54 }}>
-      <Image src="keyboard-popup.png" class="absolute" style={{ width: 64, height: 64 }} />
-      <View class="absolute items-center" style={{ insetT: 3, width: 44 }}><Text class="text-xl" style={{ textColor: "#243347" }}>{key().ch}</Text></View>
-    </View>}</Show>
   </View>;
 }

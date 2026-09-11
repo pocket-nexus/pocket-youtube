@@ -173,12 +173,6 @@
     "textureWidth": 512,
     "textureHeight": 256
   },
-  "keyboard-popup": {
-    "width": 44,
-    "height": 54,
-    "textureWidth": 64,
-    "textureHeight": 64
-  },
   "keyboard-shift": {
     "width": 32,
     "height": 32,

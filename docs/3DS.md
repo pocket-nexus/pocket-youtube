@@ -110,7 +110,7 @@ state for the new companion session. No selectable pagination row is mounted.
 
 The search keyboard uses Clear's contact-owned press model with baked glossy
 key caps. Character keys receive no focus state. Release clears the pressed
-cap and popup; backspace supports bounded repeat, and holding space enables
+cap; backspace supports bounded repeat, and holding space enables
 caret dragging. The app reuses PocketJS's text-editing controller, virtual clock
 and shared hold controller. Shift, caps lock, numbers, symbols, search and
 hardware cancel remain local. Now Playing uses a baked arrow image rather than

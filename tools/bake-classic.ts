@@ -68,10 +68,6 @@ bake("keyboard-bed",320,166,g=>{
   g.fillStyle=gradient(g,166,[[0,"#d9dee5"],[.2,"#b9c0ca"],[1,"#8f99a7"]]);g.fillRect(0,0,320,166);
   g.fillStyle="#7f8a99";g.fillRect(0,0,320,1);g.fillStyle="#f5f7fa";g.fillRect(0,1,320,1);
 });
-bake("keyboard-popup",44,54,g=>{
-  g.beginPath();g.roundRect(.5,.5,43,42,6);g.moveTo(10,40);g.lineTo(16,53);g.lineTo(28,53);g.lineTo(34,40);g.closePath();
-  g.fillStyle=gradient(g,54,[[0,"#ffffff"],[1,"#e2e7ee"]]);g.fill();g.strokeStyle="#65768a";g.lineWidth=1;g.stroke();
-});
 for (const name of ["shift", "caps", "delete"]) {
   const icon = await loadImage(root + `artwork/keyboard/keyboard-${name}.svg`);
   bake(`keyboard-${name}`, 32, 32, g => g.drawImage(icon, 0, 0, 32, 32));
