@@ -23,11 +23,12 @@ const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.flo
 function Skin(props: { src: string; w: number; h: number }) {
   return <Image src={props.src} class="absolute" style={{ insetL: 0, insetT: 0, width: props.w, height: props.h }} />;
 }
-function Tile(props: { x: number; y: number; w: number; h: number; label: string; icon?: string; accent?: boolean; onPress: () => void }) {
-  return <Focusable onPress={props.onPress} class="absolute rounded-md overflow-hidden items-center justify-center flex-col focus:border-[#2676cb] active:opacity-70"
-    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h }}>
-    <Skin src={props.h === 26 ? "classic-small-button.png" : props.w > 200 ? "classic-wide-button.png" : props.accent ? "classic-play-button.png" : "classic-button.png"}
-      w={props.h === 26 ? 128 : props.w > 200 ? 512 : props.accent ? 256 : 128} h={props.h < 30 ? 32 : 64} />
+const smallCaps: Record<number, string> = { 56: "classic-small-56.png", 68: "classic-small-68.png", 70: "classic-small-70.png", 76: "classic-small-76.png", 152: "classic-small-152.png" };
+function Tile(props: { x: number; y: number; w: number; h: number; label: string; icon?: string; accent?: boolean; disabled?: boolean; onPress: () => void }) {
+  return <Focusable onPress={() => { if (!props.disabled) props.onPress(); }} class="absolute rounded-md overflow-hidden items-center justify-center flex-col focus:border-[#2676cb] active:opacity-70"
+    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h, opacity: props.disabled ? .45 : 1 }}>
+    <Skin src={props.h === 26 ? smallCaps[props.w] : props.w > 200 ? "classic-wide-button.png" : props.accent ? "classic-play-button.png" : "classic-button.png"}
+      w={2 ** Math.ceil(Math.log2(props.w))} h={props.h < 30 ? 32 : 64} />
     <Show when={props.icon}><Image src={props.icon!} style={{ width: 32, height: 32 }} /></Show>
     <Text class="text-xs font-bold" style={{ textColor: props.accent ? "#ffffff" : INK }}>{props.label}</Text>
   </Focusable>;
@@ -52,6 +53,15 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
   });
   const downloads = createDownloads();
   const [panel, setPanel] = createSignal<"controls" | "browse" | "downloads" | "captions">("browse");
+  let downloadsOrigin: "controls" | "browse" | "captions" = "browse", downloadsBack: (() => void) | undefined;
+  const [savedKey, setSavedKey] = createSignal<string | undefined>();
+  const showDownloads = (key?: string) => { if (panel() !== "downloads") downloadsOrigin = panel() as typeof downloadsOrigin; setSavedKey(key); setPanel("downloads"); };
+  const returnFromDownloads = () => setPanel(downloadsOrigin === "browse" || props.store.player() ? downloadsOrigin : "browse");
+  const back = () => {
+    if (panel() === "downloads") { if (downloadsBack) downloadsBack(); else returnFromDownloads(); }
+    else if (panel() === "captions") setPanel(props.store.player() ? "controls" : "browse");
+    else setPanel(panel() === "browse" && props.store.player() ? "controls" : "browse");
+  };
   const [ccEnabled, setCcEnabled] = createSignal(true), [captionVisible, setCaptionVisible] = createSignal(false);
   let captionPlane: NodeMirror | undefined, captionHandle = -1;
   const [snapshot, setSnapshot] = createSignal<MediaStatus | null>(null);
@@ -64,9 +74,14 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     lastSerial = serial;
     const player = untrack(props.store.player);
     if (!player?.source) return;
-    setError(""); setSnapshot(null); setPanel("controls");
+    setError(""); setSnapshot(null);
+    if (untrack(props.store.playReason) === "play") setPanel("controls");
+    setCaptionVisible(false);
+    if (captionHandle >= 0) getOps().freeTexture?.(captionHandle);
+    captionHandle = -1;
     if (!native.open(player.source)) setError("PLAYER BUSY — TAP RETRY");
     native.volume(volume());
+    native.pause(!player.playing);
     if (plane) getOps().setImage(plane.id, native.texture());
   });
   onFrame(() => {
@@ -95,16 +110,16 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
   onButtonPress(BTN.START, playPause);
   onButtonPress(BTN.LTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) - 10));
   onButtonPress(BTN.RTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) + 10));
-  onButtonPress(BTN.CROSS, () => panel() === "browse" && props.store.player() ? setPanel("controls") : setPanel("browse"));
+  onButtonPress(BTN.CROSS, back);
   createGesture({ surface: "auxiliary", region: { rect: () => panel() === "controls" ? { x: 0, y: 36, w: 320, h: 48 } : null },
-    onLongPress: () => { const p = props.store.player(); if (p) { downloads.start(p, p.captionTrack); setPanel("downloads"); } } });
+    onLongPress: () => { const p = props.store.player(); if (p) { downloads.start(p, p.captionTrack); showDownloads(); } } });
   const position = () => props.store.player()?.position ?? 0;
   const duration = () => props.store.player()?.durationS ?? 0;
   return <>
     <View style={{ width: top.w, height: top.h, bgColor: "#000000" }}>
       <Image nodeRef={n => { plane = n; getOps().setImage(n.id, native.texture()); }}
         style={{ width: top.w, height: top.h, opacity: props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0 ? 1 : 0 }} />
-      <Show when={ccEnabled() && captionVisible() && props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0}>
+      <Show when={ccEnabled() && captionVisible() && props.store.player() && !props.store.captionChange() && (snapshot()?.presentedFrames ?? 0) > 0}>
         <View class="absolute rounded-sm" style={{ insetL: 68, insetT: 200, width: 264, height: 36, bgColor: "#000000dd" }}>
           <Image nodeRef={n => { captionPlane = n; getOps().setImage(n.id, captionHandle); }} style={{ width: 256, height: 32, marginL: 4, marginT: 2 }} />
         </View>
@@ -124,10 +139,11 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     <AuxiliarySurface>{() => <View style={{ width: bottom.width, height: bottom.height, bgColor: BG }}>
       <Skin src="classic-linen.png" w={512} h={256} />
       <Show when={panel() === "controls" && props.store.player()} fallback={<Show when={panel() === "downloads"} fallback={<Show when={panel() === "captions"}
-        fallback={<Browser store={props.store} artwork={artwork} downloads={downloads} openDownloads={() => setPanel("downloads")} returnToPlayer={() => setPanel("controls")} />}>
-        <CaptionPanel store={props.store} downloads={downloads} enabled={ccEnabled} toggle={() => setCcEnabled(!ccEnabled())} back={() => setPanel("controls")} showDownloads={() => setPanel("downloads")} />
-      </Show>}><DownloadPanel store={props.store} downloads={downloads} back={() => setPanel("browse")} /></Show>}>
-        <Navigation title="Now Playing"><Tile x={8} y={5} w={48} h={26} label="CC" onPress={() => setPanel("captions")} /><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
+        fallback={<Browser store={props.store} artwork={artwork} downloads={downloads} openDownloads={() => showDownloads()} returnToPlayer={() => setPanel("controls")} />}>
+        <CaptionPanel store={props.store} downloads={downloads} enabled={ccEnabled} enable={() => setCcEnabled(true)} toggle={() => setCcEnabled(!ccEnabled())} back={back} showDownloads={showDownloads} />
+      </Show>}><DownloadPanel store={props.store} downloads={downloads} initialKey={savedKey()} back={returnFromDownloads}
+        backRef={handler => { downloadsBack = handler; }} finish={() => { downloads.dismiss(); if (downloadsOrigin === "captions") returnFromDownloads(); }} /></Show>}>
+        <Navigation title="Now Playing"><Tile x={8} y={5} w={68} h={26} label={props.store.captionChange()?.phase === "error" ? "CC !" : ccEnabled() && props.store.player()?.hasCaptions ? "CC on" : "CC off"} onPress={() => setPanel("captions")} /><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
         <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><Artwork item={playingItem()!} artwork={artwork} compact /></View>
         <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "Buffering…" : "")} />
         <Tile x={8} y={124} w={72} h={56} label="10 sec" icon="classic-back.png" onPress={() => props.store.seekTo(position() - 10)} />
@@ -257,89 +273,149 @@ function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
     <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
   </Focusable>;
 }
-function DownloadPanel(props: { store: YoutubeStore; downloads: Downloads; back: () => void }) {
+function DownloadPanel(props: { store: YoutubeStore; downloads: Downloads; initialKey?: string; back: () => void; finish: () => void; backRef: (handler: (() => void) | undefined) => void }) {
   const d = props.downloads;
-  const [selected, setSelected] = createSignal<string | null>(null);
+  const [selected, setSelected] = createSignal<string | null>(props.initialKey ?? null);
+  const [confirmDelete, setConfirmDelete] = createSignal(false), [deleteError, setDeleteError] = createSignal("");
+  const item = () => d.entries().find(entry => entry.key === selected());
+  const back = () => { if (confirmDelete()) setConfirmDelete(false); else if (selected()) { setSelected(null); setDeleteError(""); } else props.back(); };
+  props.backRef(back); onCleanup(() => props.backRef(undefined));
   const label = () => ({ resolving: "Finding video…", captions: "Preparing captions…", encoding: "Converting video",
-    ready: "Preparing transfer…", connecting: "Connecting to download…", downloading: "Saving to SD card", verifying: "Verifying SD card…",
-    complete: "Saved on SD card", cancelled: "Cancelled", error: "Download failed", idle: "" })[d.phase()] ?? d.phase();
+    ready: "Preparing transfer…", connecting: "Connecting…", downloading: "Saving to SD card", verifying: "Verifying SD card…",
+    complete: "Saved on SD card", cancelling: "Cancelling download…", cancelled: "Download cancelled", error: "Download failed", idle: "" })[d.phase()] ?? d.phase();
   const active = () => d.phase() !== "idle";
   return <View style={{ width: 320, height: 240 }}>
-    <Navigation title="Saved on SD"><Tile x={8} y={5} w={56} h={26} label="Back" onPress={props.back} /></Navigation>
-    <Show when={active()}>
-      <View class="absolute" style={{ insetL: 12, insetT: 42, width: 296, height: 66 }}>
-        <Text class="text-xs font-bold" style={{ textColor: INK }}>{label()}{["encoding", "downloading"].includes(d.phase()) ? ` ${Math.floor(d.progress() * 100)}%` : ""}</Text>
-        <View class="absolute" style={{ insetT: 18, width: 210, height: 16, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM }}>{d.message() || d.title()}</Text></View>
-        <View class="absolute rounded-sm" style={{ insetT: 43, width: 212, height: 7, bgColor: "#aab5c2" }}>
-          <View class="rounded-sm" style={{ width: 212 * Math.max(0, Math.min(1, d.progress())), height: 7, bgColor: BLUE }} />
+    <Navigation title={item() ? item()!.video ? "Saved video" : "Saved captions" : "Saved on SD"}><Tile x={8} y={5} w={56} h={26} label="Back" onPress={back} /></Navigation>
+    <Show when={item()} fallback={<>
+      <Show when={active()}>
+        <View class="absolute" style={{ insetL: 12, insetT: 42, width: 296, height: 66 }}>
+          <Text class="text-xs font-bold" style={{ textColor: INK }}>{label()}{["encoding", "downloading"].includes(d.phase()) ? ` ${Math.floor(d.progress() * 100)}%` : ""}</Text>
+          <View class="absolute" style={{ insetT: 17, width: 212, height: 16, overflow: 1 }}><Text class="text-xs" style={{ textColor: INK }}>{d.title()}</Text></View>
+          <View class="absolute" style={{ insetT: 34, width: 212, height: 30, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM, width: 212 }}>{d.phase() === "error" ? d.message() : d.task()?.captionsOnly ? `Captions · ${d.task()?.track ?? "Original language"}` : d.message() || "Video + available captions"}</Text></View>
+          <View class="absolute rounded-sm" style={{ insetT: 67, width: 212, height: 7, bgColor: "#aab5c2" }}>
+            <View class="rounded-sm" style={{ width: 212 * Math.max(0, Math.min(1, d.progress())), height: 7, bgColor: BLUE }} />
+          </View>
         </View>
-      </View>
-      <Tile x={238} y={66} w={70} h={26} label={d.busy() ? "Cancel" : "Done"} onPress={() => d.busy() ? d.cancel() : d.dismiss()} />
-    </Show>
-    <View class="absolute" style={{ insetL: 0, insetT: active() ? 112 : 42, width: 320, height: active() ? 98 : 168 }}>
-      <Show when={d.entries().length} fallback={<View class="items-center justify-center" style={{ width: 320, height: 90 }}>
-        <Text class="text-xs" style={{ textColor: DIM }}>Hold a video to save it here.</Text>
-      </View>}>
-        <VirtualList surface="auxiliary" count={d.entries().length} rowHeight={48} height={active() ? 98 : 168} overscan={0}
-          onRowPress={index => { const item = d.entries()[index]; if (item.video) props.store.playLocal(item); else setSelected(item.key); }}
-          onRowLongPress={index => setSelected(d.entries()[index].key)}
-          renderRow={index => { const item = () => d.entries()[index]; return <View class="flex-col" style={{ width: 320, height: 48, paddingL: 12, paddingT: 5, bgColor: "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1 }}>
-            <Text class="text-sm" style={{ textColor: INK, width: 296 }}>{item().title}</Text>
-            <Text class="text-xs" style={{ textColor: DIM }}>{item().video ? `${time(item().durationMs / 1000)} · ${(item().bytes / 1048576).toFixed(1)} MB` : "Captions only"}{item().captions ? ` · CC ${item().language}` : ""}</Text>
-          </View>; }} />
+        <Tile x={238} y={66} w={70} h={26} disabled={d.phase() === "cancelling"} label={d.phase() === "cancelling" ? "Wait…" : d.busy() ? "Cancel" : d.phase() === "complete" ? "Done" : "Retry"}
+          onPress={() => d.busy() ? d.cancel() : d.phase() === "complete" ? props.finish() : d.retry()} />
       </Show>
-    </View>
-    <View class="absolute" style={{ insetL: 12, insetT: 221 }}><Text class="text-xs" style={{ textColor: DIM }}>Play offline · Hold saved item to delete</Text></View>
-    <Show when={selected()}>
-      <View class="absolute inset-0 items-center justify-center flex-col gap-3" style={{ bgColor: BG }}>
-        <Text class="text-sm" style={{ textColor: INK }}>Delete this saved item from SD?</Text>
-        <Focusable onPress={() => { const key = selected()!; if (props.store.player()?.stream === key) { mediaPlayer().close(); props.store.stopPlayback(); } d.remove(key); setSelected(null); }} class="rounded-lg px-6 py-3 bg-[#a63838]"><Text class="text-sm text-white">Delete</Text></Focusable>
-        <Focusable onPress={() => setSelected(null)} class="rounded-lg px-6 py-3 bg-[#667485]"><Text class="text-sm text-white">Keep</Text></Focusable>
+      <View class="absolute" style={{ insetL: 0, insetT: active() ? 124 : 42, width: 320, height: active() ? 86 : 168 }}>
+        <Show when={d.entries().length} fallback={<View class="items-center justify-center flex-col gap-2" style={{ width: 320, height: 90 }}>
+          <Text class="text-xs font-bold" style={{ textColor: INK }}>{d.busy() ? "Your download is in progress" : "No saved videos or captions"}</Text>
+          <Text class="text-xs" style={{ textColor: DIM }}>{d.busy() ? "You can leave this page while it saves." : "Hold a video, or save from its CC page."}</Text>
+        </View>}>
+          <VirtualList surface="auxiliary" count={d.entries().length} rowHeight={48} height={active() ? 86 : 168} overscan={0}
+            onRowPress={index => { const entry = d.entries()[index]; if (entry.video) props.store.playLocal(entry); else setSelected(entry.key); }}
+            onRowLongPress={index => setSelected(d.entries()[index].key)}
+            renderRow={index => { const entry = () => d.entries()[index]; return <View class="flex-col" style={{ width: 320, height: 48, paddingL: 12, paddingT: 5, bgColor: "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1 }}>
+              <Text class="text-sm" style={{ textColor: INK, width: 296 }}>{entry().title}</Text>
+              <Text class="text-xs" style={{ textColor: DIM }}>{entry().video ? `${time(entry().durationMs / 1000)} · ${(entry().bytes / 1048576).toFixed(1)} MB` : "WebVTT captions"}{entry().captions ? ` · ${entry().language}` : ""}</Text>
+            </View>; }} />
+        </Show>
       </View>
+      <View class="absolute" style={{ insetL: 12, insetT: 221 }}><Text class="text-xs" style={{ textColor: DIM }}>Tap to open · Hold for details / delete</Text></View>
+    </>}>
+      <View class="absolute" style={{ insetL: 12, insetT: 47, width: 296, height: 32, overflow: 1 }}><Text class="text-sm font-bold" style={{ textColor: INK, width: 296 }}>{item()?.title}</Text></View>
+      <View class="absolute" style={{ insetL: 12, insetT: 85 }}><Text class="text-xs" style={{ textColor: DIM }}>{item()?.language || "No captions"} · Saved on this 3DS</Text></View>
+      <View class="absolute" style={{ insetL: 12, insetT: 105 }}><Text class="text-xs font-bold" style={{ textColor: INK }}>{item()?.video ? "Offline video file" : "WebVTT file"}</Text></View>
+      <View class="absolute flex-col" style={{ insetL: 12, insetT: 123, width: 296, height: 30 }}>
+        <For each={(item() ? `${item()!.key}.${item()!.video ? "pkd" : "vtt"}` : "").match(/.{1,38}/g) ?? []}>{line => <Text class="text-xs" style={{ textColor: DIM }}>{line}</Text>}</For>
+      </View>
+      <View class="absolute" style={{ insetL: 12, insetT: 158, width: 296 }}><Text class="text-xs" style={{ textColor: confirmDelete() || deleteError() ? "#a63838" : DIM, width: 296 }}>
+        {deleteError() || (confirmDelete() ? "Delete this item and its captions from SD?" : item()?.video ? "Video and captions play without a companion." : "Copy the .vtt file from SD to use it elsewhere.")}
+      </Text></View>
+      <Show when={confirmDelete()} fallback={<Tile x={126} y={194} w={68} h={26} label="Delete" onPress={() => setConfirmDelete(true)} />}>
+        <Tile x={84} y={194} w={68} h={26} label="Delete" onPress={() => {
+          const key = selected()!;
+          if (!d.remove(key)) { setDeleteError("SD card busy. Try Delete again."); return; }
+          if (props.store.player()?.stream === key) { mediaPlayer().close(); props.store.stopPlayback(); }
+          setSelected(null); setConfirmDelete(false); setDeleteError("");
+        }} />
+        <Tile x={168} y={194} w={68} h={26} label="Keep" onPress={() => { setConfirmDelete(false); setDeleteError(""); }} />
+      </Show>
     </Show>
   </View>;
 }
-function CaptionPanel(props: { store: YoutubeStore; downloads: Downloads; enabled: () => boolean; toggle: () => void; back: () => void; showDownloads: () => void }) {
-  const [tracks, setTracks] = createSignal<{ id: string; label: string }[]>([]), [more, setMore] = createSignal(false), [message, setMessage] = createSignal("");
-  const [offset, setOffset] = createSignal(0);
-  const player = () => props.store.player()!;
+function CaptionPanel(props: { store: YoutubeStore; downloads: Downloads; enabled: () => boolean; enable: () => void; toggle: () => void; back: () => void; showDownloads: (key?: string) => void }) {
+  const client = offload(), player = () => props.store.player()!;
   const local = () => !!player()?.source && "file" in player().source!;
-  let disposed = false;
-  onCleanup(() => { disposed = true; });
-  const load = (offset: number) => {
-    if (local()) { setMessage(player().hasCaptions ? `Saved captions: ${player().captionLabel}` : "No captions saved with this video"); return; }
-    setMessage("Loading tracks…");
-    const request = offload().request("youtube.caption-tracks", JSON.stringify({ videoId: player().videoId, offset }), result => {
-      if (disposed) return;
-      if (!result.ok) { setMessage("Connect companion to load captions"); return; }
-      const reply = JSON.parse(result.value); setTracks(reply.tracks); setMore(reply.more); setOffset(offset);
-      setMessage(player().captionError || (reply.tracks.length ? "Tap a language to play with captions" : "No captions available"));
+  const [tracks, setTracks] = createSignal<{ id: string; label: string }[]>([]), [more, setMore] = createSignal(false);
+  const [loading, setLoading] = createSignal(false), [loadError, setLoadError] = createSignal("");
+  const [offset, setOffset] = createSignal(0), [connected, setConnected] = createSignal(client.connected());
+  let disposed = false, generation = 0, requestId = 0, requestedOffset = 0, session = client.session(), serial = props.store.playSerial();
+  onCleanup(() => { disposed = true; generation++; if (requestId) client.cancel(requestId); });
+  const load = (next: number) => {
+    if (local()) return;
+    if (requestId) client.cancel(requestId);
+    requestId = 0; requestedOffset = next;
+    const owner = ++generation;
+    if (!client.connected()) { setLoading(false); setLoadError("Connect companion to choose a language."); return; }
+    setLoading(true); setLoadError("");
+    requestId = client.request("youtube.caption-tracks", JSON.stringify({ videoId: player().videoId, offset: next }), result => {
+      if (disposed || owner !== generation) return;
+      requestId = 0; setLoading(false);
+      if (!result.ok) { setLoadError("Could not load languages. Try again."); return; }
+      try {
+        const reply = JSON.parse(result.value);
+        if (!Array.isArray(reply.tracks) || reply.tracks.length > 8 || reply.tracks.some((track: { id: string; label: string }) => !track || typeof track.id !== "string" || typeof track.label !== "string")) throw new Error("Invalid tracks");
+        setTracks(reply.tracks); setMore(!!reply.more); setOffset(next);
+      } catch { setLoadError("Could not load languages. Try again."); }
     });
-    if (!request) setMessage("Companion busy; reopen CC to retry");
+    if (!requestId) { setLoading(false); setLoadError("Companion busy. Try again."); }
   };
   load(0);
+  onFrame(() => {
+    if (local()) return;
+    const next = client.session();
+    if (next !== session) { session = next; setConnected(!!next); load(requestedOffset); }
+    const playing = props.store.playSerial();
+    if (playing !== serial) { serial = playing; if (loadError()) load(requestedOffset); }
+  });
+  const switching = () => props.store.captionChange()?.phase === "loading";
+  const failure = () => props.store.captionChange()?.phase === "error" ? props.store.captionChange()!.message : player().captionError;
+  const selectedLabel = () => player().captionLabel || tracks().find(track => track.id === player().captionTrack)?.label || player().captionTrack || "Original language";
+  const active = (id: string) => id === player().captionTrack && !switching() && !failure();
+  const saved = () => props.downloads.entries().find(entry => entry.key === `${player().videoId}-cc-${player().captionTrack ?? "default"}`);
+  const choose = (id: string) => {
+    if (switching() || !connected() || loading()) return;
+    if (active(id) || props.store.selectCaption(id)) props.enable();
+  };
+  const retry = () => { const track = props.store.captionChange()?.track || player().captionTrack; if (track) choose(track); else load(offset()); };
+  const heading = () => switching() ? "Switching captions…" : failure() ? "Captions unavailable" : player().hasCaptions ? `${selectedLabel()} · ${props.enabled() ? "On" : "Off"}` : "No captions for this video";
+  const hint = () => loadError() || (switching() ? "Applying your language at this position." : failure() ? "Try again, or choose another language." : loading() ? "Loading languages…" : !player().hasCaptions ? local() ? "This copy was saved without captions." : "No language or subtitle file is available." : local() ? "Included with your offline video." : props.enabled() ? "Choose a language. Captions appear above." : "Captions hidden. Your language is kept.");
   return <View style={{ width: 320, height: 240 }}>
     <Navigation title="Captions"><Tile x={8} y={5} w={56} h={26} label="Back" onPress={props.back} />
-      <Tile x={244} y={5} w={68} h={26} label={props.enabled() ? "CC on" : "CC off"} onPress={props.toggle} /></Navigation>
-    <View class="absolute" style={{ insetL: 12, insetT: 43, width: 296, height: 26, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM }}>{message()}</Text></View>
-    <View class="absolute" style={{ insetL: 0, insetT: 70, width: 320, height: 100 }}>
-      <VirtualList surface="auxiliary" count={tracks().length} rowHeight={32} height={100} overscan={0}
-        onRowPress={index => { const track = tracks()[index]; props.store.selectCaption(track.id); props.back(); }}
-        renderRow={index => <View style={{ width: 320, height: 32, paddingL: 12, paddingT: 7, bgColor: "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1 }}>
-          <Text class="text-xs" style={{ textColor: INK }}>{tracks()[index].id === player().captionTrack ? "✓ " : ""}{tracks()[index].label}</Text>
-        </View>} />
+      <Tile x={244} y={5} w={68} h={26} label={props.enabled() && player().hasCaptions ? "CC on" : "CC off"} disabled={!player().hasCaptions || switching()} onPress={props.toggle} /></Navigation>
+    <View class="absolute" style={{ insetL: 12, insetT: 43, width: 296, height: 18, overflow: 1 }}><Text class="text-xs font-bold" style={{ textColor: failure() ? "#a63838" : INK }}>{heading()}</Text></View>
+    <View class="absolute" style={{ insetL: 12, insetT: 62, width: 296, height: 16, overflow: 1 }}><Text class="text-xs" style={{ textColor: DIM }}>{hint()}</Text></View>
+    <View class="absolute" style={{ insetL: 0, insetT: 84, width: 320, height: 96 }}>
+      <Show when={tracks().length && !local()} fallback={<View class="items-center justify-center flex-col gap-2" style={{ width: 320, height: 96 }}>
+        <Text class="text-sm font-bold" style={{ textColor: INK }}>{local() ? player().hasCaptions ? "Available offline" : "No saved captions" : loading() ? "Loading…" : loadError() ? "Languages unavailable" : "No caption tracks"}</Text>
+        <Text class="text-xs" style={{ textColor: DIM }}>{local() && player().hasCaptions ? "Use CC above to show or hide captions." : loadError() ? "Reconnect or tap Retry below." : loading() ? "Please wait for the companion." : "This video can still play without captions."}</Text>
+      </View>}>
+        <VirtualList surface="auxiliary" count={tracks().length} rowHeight={32} height={96} overscan={0}
+          onRowPress={index => choose(tracks()[index].id)}
+          renderRow={index => <View style={{ width: 320, height: 32, bgColor: active(tracks()[index].id) ? "#e3effe" : "#f5f7fa", borderWidth: 1, borderColor: "#c2cbd5", overflow: 1, opacity: connected() && !loading() ? 1 : .5 }}>
+            <View class="absolute" style={{ insetL: 12, insetT: 8, width: 234, height: 16, overflow: 1 }}><Text class="text-xs" style={{ textColor: INK }}>{tracks()[index].label}</Text></View>
+            <View class="absolute" style={{ insetL: 254, insetT: 8 }}><Text class="text-xs font-bold" style={{ textColor: BLUE }}>{switching() && props.store.captionChange()?.track === tracks()[index].id ? "Wait…" : active(tracks()[index].id) ? "Selected" : ""}</Text></View>
+          </View>} />
+      </Show>
     </View>
     <Show when={!local()}>
-      <Show when={offset() > 0}><Tile x={8} y={178} w={68} h={26} label="Previous" onPress={() => load(Math.max(0, offset() - 8))} /></Show>
-      <Show when={more()}><Tile x={244} y={178} w={68} h={26} label="More" onPress={() => load(offset() + 8)} /></Show>
-      <Show when={player().hasCaptions}>
-        <Focusable onPress={() => { if (!props.downloads.busy()) props.downloads.start(player(), player().captionTrack, true); props.showDownloads(); }}
-          class="absolute rounded-md items-center justify-center" style={{ insetL: 84, insetT: 178, width: 152, height: 26, bgColor: "#f4f7fb", borderWidth: 1, borderColor: "#9aa5b2" }}>
-          <Text class="text-xs font-bold" style={{ textColor: INK }}>Save captions to SD</Text>
-        </Focusable>
+      <Show when={offset() > 0}><Tile x={8} y={188} w={68} h={26} label="Previous" disabled={loading() || switching() || !connected()} onPress={() => load(Math.max(0, offset() - 8))} /></Show>
+      <Show when={more()}><Tile x={244} y={188} w={68} h={26} label="More" disabled={loading() || switching() || !connected()} onPress={() => load(offset() + 8)} /></Show>
+      <Show when={(loadError() && (connected() || !saved())) || failure()} fallback={<Show when={player().hasCaptions}>
+        <Tile x={84} y={188} w={152} h={26} label={props.downloads.busy() ? "View download progress" : saved() ? "Saved on SD · View" : "Save captions to SD"}
+          disabled={switching() || loading() || (!connected() && !saved())} onPress={() => {
+            if (props.downloads.busy()) { props.showDownloads(); return; }
+            if (saved()) { props.showDownloads(saved()!.key); return; }
+            if (props.downloads.start(player(), player().captionTrack, true)) props.showDownloads();
+          }} />
+      </Show>}>
+        <Tile x={84} y={188} w={152} h={26} label={loading() || switching() ? "Retrying…" : "Retry"} disabled={loading() || switching() || !connected()} onPress={() => loadError() ? load(requestedOffset) : retry()} />
       </Show>
     </Show>
-    <View class="absolute" style={{ insetL: 12, insetT: 219 }}><Text class="text-xs" style={{ textColor: DIM }}>{local() ? "CC works without the companion" : player().captionLabel || "Original language selected by default"}</Text></View>
+    <View class="absolute" style={{ insetL: 12, insetT: 223 }}><Text class="text-xs" style={{ textColor: DIM }}>{local() ? player().hasCaptions ? "Captions stay on this 3DS with the video." : "Video remains available offline." : saved() ? "This language is saved as WebVTT on SD." : "B returns to playback · Saves stay on SD"}</Text></View>
   </View>;
 }
 function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {

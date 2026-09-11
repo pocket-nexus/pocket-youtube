@@ -49,6 +49,8 @@ export function createYoutubeStore(browse?: SearchModel) {
   /** Bumped on every "playing" reply — the player screen re-opens the
    *  stream when it changes (fresh .pkst file per play/replay). */
   const [playSerial, setPlaySerial] = createSignal(0);
+  const [playReason, setPlayReason] = createSignal<"play" | "seek" | "caption" | "resume">("play");
+  const [captionChange, setCaptionChange] = createSignal<{ track: string; phase: "loading" | "error"; message?: string } | null>(null);
   /** Bumped when a FRESH search replaces the list (appends do not) — the
    *  browse screen focuses row 0 so ○ plays the first result immediately. */
   const [searchSerial, setSearchSerial] = createSignal(0);
@@ -79,7 +81,7 @@ export function createYoutubeStore(browse?: SearchModel) {
         if (phase() === "connect") {
           const p = player();
           setPhase("browse");
-          if (p?.source && !("file" in p.source)) startPlayback(p.videoId, p.position, p.captionTrack);
+          if (p?.source && !("file" in p.source)) startPlayback(p.videoId, p.position, p.captionTrack, "resume");
         }
       }
     });
@@ -136,8 +138,10 @@ export function createYoutubeStore(browse?: SearchModel) {
    *  pipelines observed on hardware) — one play request in flight at a time;
    *  taps while resolving are absorbed. */
   let playPending = false;
-  const startPlayback = (videoId: string, position = 0, track?: string): void => {
-    if (playPending) return;
+  const startPlayback = (videoId: string, position = 0, track?: string, reason: "play" | "caption" | "resume" = "play"): boolean => {
+    if (playPending) return false;
+    const playing = reason === "caption" ? player()?.playing !== false : true;
+    setCaptionChange(reason === "caption" ? { track: track!, phase: "loading" } : null);
     playPending = true;
     const owner = ++playbackGeneration;
     setStatus("RESOLVING…");
@@ -156,17 +160,20 @@ export function createYoutubeStore(browse?: SearchModel) {
           source: msg.source,
           captionTrack: msg.captionTrack, captionLabel: msg.captionLabel, captionError: msg.captionError, hasCaptions: msg.hasCaptions,
           position: msg.position,
-          playing: true,
+          playing,
           ended: false,
         });
-        setPlaySerial(playSerial() + 1);
+        setCaptionChange(msg.captionError ? { track: msg.captionTrack ?? track ?? "", phase: "error", message: msg.captionError } : null);
+        setPlayReason(reason); setPlaySerial(playSerial() + 1);
         setPhase("player");
       } else if (msg.t === "error") {
         setStatus(`ERROR: ${msg.message}`);
+        if (reason === "caption") setCaptionChange({ track: track!, phase: "error", message: "Could not switch captions. Try again." });
       }
     });
+    return true;
   };
-  const play = (item: ResultItem): void => startPlayback(item.videoId);
+  const play = (item: ResultItem): void => { startPlayback(item.videoId); };
 
   const togglePause = (): void => {
     const p = player();
@@ -185,7 +192,7 @@ export function createYoutubeStore(browse?: SearchModel) {
     if (p.source && "file" in p.source) {
       const position = Math.max(0, Math.min(Math.max(0, p.durationS - .001), seconds));
       setPlayer({ ...p, source: { file: p.source.file, positionMs: Math.round(position * 1000) }, position, playing: true, ended: false });
-      setPlaySerial(playSerial() + 1); setStatus(""); return;
+      setPlayReason("seek"); setPlaySerial(playSerial() + 1); setStatus(""); return;
     }
     if (p.source) { playPending = true; setStatus("SEEKING…"); }
     setPlayer({ ...p, playing: true, ended: false });
@@ -195,7 +202,7 @@ export function createYoutubeStore(browse?: SearchModel) {
       if (msg.t === "playing") {
         if (msg.source) companionPlayback(true);
         setPlayer({ ...p, stream: msg.stream, source: msg.source, position: msg.position, playing: true, ended: false });
-        setPlaySerial(playSerial() + 1); setStatus("");
+        setPlayReason("seek"); setPlaySerial(playSerial() + 1); setStatus("");
       } else if (msg.t === "error") setStatus(`ERROR: ${msg.message}`);
     });
   };
@@ -203,6 +210,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   const stopPlayback = (): void => {
     companionPlayback(false);
     playbackGeneration++; playPending = false;
+    setCaptionChange(null);
     setPlayer(null);
     setPhase("browse");
     runEffect<HostMsg>("yt/stop", {}, () => {});
@@ -216,15 +224,17 @@ export function createYoutubeStore(browse?: SearchModel) {
   const playLocal = (entry: MediaLibraryEntry) => {
     if (!entry.video) return;
     playbackGeneration++; playPending = false; companionPlayback(false);
+    setCaptionChange(null);
     if (resolveTransport() === "companion") runEffect<HostMsg>("yt/stop", {}, () => {});
     setPlayer({ videoId: entry.key.slice(0, 11), title: entry.title, durationS: entry.durationMs / 1000, fps: 30,
       stream: entry.key, source: { file: entry.key }, position: 0, playing: true, ended: false,
       hasCaptions: entry.captions, captionLabel: entry.language });
-    setPhase("player"); setStatus(""); setPlaySerial(playSerial() + 1);
+    setPhase("player"); setStatus(""); setPlayReason("play"); setPlaySerial(playSerial() + 1);
   };
   return {
     playLocal,
-    selectCaption: (track: string) => { const p = player(); if (p && p.source && !("file" in p.source)) startPlayback(p.videoId, p.position, track); },
+    selectCaption: (track: string) => { const p = player(); return !!(p?.source && !("file" in p.source) && startPlayback(p.videoId, p.position, track, "caption")); },
+    captionChange, playReason,
     phase,
     transport,
     query,

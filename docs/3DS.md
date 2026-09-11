@@ -59,21 +59,27 @@ The companion resolves the source, prepares captions and converts video to
 the existing MVD-compatible format. Saved shows conversion percentage, then
 **the percentage transferred to the 3DS SD card**, followed by SD verification.
 Cancel stops the active stage. Source, network, checksum and SD write failures
-show an error; retry by holding the video again. A video without captions can
-be saved and is marked as having no captions. A failure fetching an available
+show an error; **Retry restarts the same video and caption selection**.
+A video without captions can be saved and is marked as having no captions. A failure fetching an available
 caption track stops preparation so the saved file does not omit that track.
 
 **Saved playback needs neither Wi-Fi nor a running companion.** Tap a saved
 video to play it; pause, volume, L/R and scrubbing use the local file. An
 incoming companion session leaves that playback intact. Hold a saved item to
-open its deletion control. The library allows 64 entries; each package must
-be below 2 GiB and have a known duration of at most 24 hours. There is no
+open its file details, then use Delete and confirm. Tapping a caption-only
+item opens its WebVTT filename and language. The library allows 64 entries;
+each package must be below 2 GiB and have a known duration of at most 24 hours. There is no
 partial-download resume; retry starts a new transfer.
 
 The CC panel offers on/off, language selection and **Save captions to SD**.
 The default track prefers source-language subtitles, with an automatic track
-as fallback. Language selection preserves the playback position. Video
-downloads include the selected track; caption-only downloads appear in Saved
+as fallback. **Language selection preserves playback position and pause state**.
+The panel stays open while the language is applied, marks the selected track,
+and offers Retry after failure. CC off hides captions and keeps the selection.
+Track loading retries on reconnect; videos without captions show an empty state.
+Saving opens progress; Done returns to the caption panel and shows Saved on SD.
+Back and the B button return through file details, downloads and captions in order.
+Video downloads include the selected track; caption-only downloads appear in Saved
 and have no play action. To save a different track with an existing video,
 delete that saved video and download it with the new selection.
 
@@ -203,8 +209,10 @@ check the native seek index and export timed Japanese captions. PocketJS's
 storage test executes the C worker against real local sockets and files with
 desktop thread calls replacing libctru. It covers SD readback, reopening the
 library, deletion, corrupt data, truncated data, cancellation and write errors.
-The WASM journey covers long-press suppression, both progress stages, captions,
-offline pause/seek and reconnect without replacing local playback. These
+The WASM journey covers button cap edges, caption selection and retry, pause
+preservation, track pagination, save/cancel/retry, file details, Back/B navigation,
+empty captions, long-press suppression, both progress stages, offline pause/seek
+and reconnect without replacing local playback. These
 receipts cover software behavior; **on-console downloading and offline playback
 require a new hardware run**.
 
