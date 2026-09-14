@@ -10,9 +10,9 @@
 // the same selection wash the PSP draws; the keyboard is the framework's
 // classic system keyboard on the auxiliary surface. Saved videos and caption
 // controls are out of this presentation until the PSP can match them.
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show, untrack, type JSX } from "solid-js";
 import { useActions } from "@pocketjs/framework/actions";
-import { CLASSIC, ClassicList, ClassicSkeleton } from "@pocketjs/framework/classic";
+import { CLASSIC, ClassicBar, ClassicFooter, ClassicList } from "@pocketjs/framework/classic";
 import { AuxiliaryPortal, AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
 import { auxiliaryViewport } from "@pocketjs/framework/display";
 import { createGesture } from "@pocketjs/framework/gesture";
@@ -24,17 +24,16 @@ import { glyph } from "@pocketjs/framework/modality";
 import { offload } from "@pocketjs/framework/offload";
 import { createOsk, Osk } from "@pocketjs/framework/osk";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
-import { ResourceImage } from "@pocketjs/framework/resource";
-import { createResourceView } from "@pocketjs/framework/resource-view";
+import { installSystemLayer } from "@pocketjs/framework/system";
 import type { VirtualListHandle } from "@pocketjs/framework/virtual-list";
-import { createYoutubeResources, rendition, type ArtworkCollection } from "../artwork.ts";
+import { createYoutubeResources, type ArtworkCollection } from "../artwork.ts";
 import { pumpDriver } from "../driver.ts";
 import type { ResultItem } from "../protocol.ts";
+import { ArtworkRow, time } from "../rows.tsx";
 import { createCompanionSearch } from "../search.ts";
 import { createYoutubeStore, type YoutubeStore } from "../store.ts";
 
 const BG = CLASSIC.background, INK = CLASSIC.ink, DIM = CLASSIC.dim, BLUE = CLASSIC.blue;
-const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 function Skin(props: { src: string; w: number; h: number }) {
   return <Image src={props.src} class="absolute" style={{ insetL: 0, insetT: 0, width: props.w, height: props.h }} />;
 }
@@ -49,12 +48,10 @@ function Tile(props: { x: number; y: number; w: number; h: number; label: string
     <Text class="text-xs font-bold" style={{ textColor: props.accent ? "#ffffff" : INK }}>{props.label}</Text>
   </Focusable>;
 }
-function Navigation(props: { title: string; children?: JSX.Element }) {
-  return <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 0, width: 320, height: 36, overflow: 1 }}>
-    <Skin src="classic-nav.png" w={512} h={64} />
-    <View class="absolute" style={{ insetT: 11 }}><Text class="text-sm font-bold" style={{ textColor: "#ffffff" }}>{props.title}</Text></View>
-    <View class="absolute" style={{ insetT: 10 }}><Text class="text-sm font-bold" style={{ textColor: "#46566c" }}>{props.title}</Text></View>
-    {props.children}
+/** The bottom screen's bar: the framework's ClassicBar, absolute at the top. */
+function Navigation(props: { title?: string; children?: JSX.Element }) {
+  return <View class="absolute" style={{ insetL: 0, insetT: 0, width: 320, height: 36 }}>
+    <ClassicBar width={320} title={props.title}>{props.children}</ClassicBar>
   </View>;
 }
 
@@ -66,6 +63,15 @@ export default function DualScreenApp() {
   onFrame(() => {
     pumpDriver();
     store.connectTick();
+  });
+  // Hold SELECT: identity, connection state, the verbs of the moment — on
+  // the touch screen, where the controls live.
+  installSystemLayer({
+    title: "Pocket YouTube",
+    version: "0.3.0",
+    surface: "auxiliary",
+    status: () => (store.phase() === "connect" ? "Waiting for the Mac companion over WiFi" : "Companion connected over WiFi"),
+    items: () => (store.player() ? [{ label: "Stop playback", run: store.stopPlayback }] : []),
   });
   return <DualScreen store={store} artwork={resources.artwork} />;
 }
@@ -141,11 +147,10 @@ export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollect
       </Show>
     </View>
     <AuxiliarySurface>{() => <View style={{ width: bottom.width, height: bottom.height, bgColor: BG }}>
-      <Skin src="classic-linen.png" w={512} h={256} />
       <Show when={panel() === "controls" && props.store.player()}
         fallback={<Browser store={props.store} artwork={artwork} returnToPlayer={() => setPanel("controls")} />}>
         <Navigation title="Now Playing"><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
-        <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><Artwork item={playingItem()!} artwork={artwork} compact /></View>
+        <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><ArtworkRow item={playingItem()!} artwork={artwork} width={320} compact /></View>
         <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "Buffering…" : "")} />
         <Tile x={8} y={124} w={72} h={56} label="10 sec" icon="classic-back.png" onPress={() => props.store.seekTo(position() - 10)} />
         <Tile x={88} y={124} w={144} h={56} label={props.store.player()?.ended ? "Replay" : props.store.player()?.playing ? "Pause" : "Play"}
@@ -223,20 +228,19 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; retur
           : props.store.query() || "Search YouTube"}</Text>
       </Focusable>
     </Navigation>
-    <View class="absolute" style={{ insetL: 0, insetT: 40, width: 320, height: 172 }}>
+    <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 180 }}>
       <Show when={props.store.results().length} fallback={<SearchWelcome store={props.store} open={keyboard.open} />}>
-        <ClassicList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={172}
+        <ClassicList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={180}
           inputActive={() => !keyboard.isOpen()} ref={setList}
           onRowPress={index => props.store.play(props.store.results()[index])}
           hasMore={props.store.hasMore} loadingMore={props.store.searching} onLoadMore={props.store.loadMore}
           onWindow={(first, visible, velocity) => { if (!keyboard.isOpen()) props.store.prefetch(first, visible, velocity); }}
-          renderRow={index => <Artwork item={props.store.results()[index]} artwork={props.artwork} />} />
+          renderRow={index => <ArtworkRow item={props.store.results()[index]} artwork={props.artwork} width={320} />} />
       </Show>
     </View>
-    <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
-      <Skin src="classic-footer.png" w={512} h={32} />
-      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? `Tap to play · ${actions.legend()}` : `Touch the field or press ${glyph("triangle")} to search`)}</Text>}>
-        <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
+    <View class="absolute" style={{ insetL: 0, insetT: 216, width: 320, height: 24 }}>
+      <Show when={props.store.player()} fallback={<ClassicFooter width={320} text={props.store.status() || (props.store.results().length ? `Tap to play · ${actions.legend()}` : `Touch the field or press ${glyph("triangle")} to search`)} alert={props.store.status().startsWith("Error")} />}>
+        <Focusable onPress={props.returnToPlayer} class="active:opacity-70"><ClassicFooter width={320} text="Now Playing ›" /></Focusable>
       </Show>
     </View>
     <AuxiliaryPortal>{() => <View style={{ posType: 1, insetB: 0, insetL: 0, width: 320, hitPass: 1 }}>
@@ -267,23 +271,4 @@ function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
     </View>
     <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
   </Focusable>;
-}
-/** One result row: host-rendered title coverage and a sixteen-colour
- *  thumbnail as demand-driven resources, skeleton lines while pending. */
-function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; compact?: boolean }) {
-  const text = () => rendition(props.item, "text"), thumbnail = () => rendition(props.item, "thumbnail");
-  const view = createResourceView(props.artwork, { demand: () => [
-    { input: text(), priority: 0, pin: true }, { input: thumbnail(), priority: 10, pin: true },
-  ] });
-  return <View style={{ width: 320, height: props.compact ? 48 : 64, overflow: 1 }}>
-    <Show when={!props.compact}><Skin src="classic-row.png" w={512} h={64} /></Show>
-    <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: props.compact ? 4 : 8, width: 72, height: 40, overflow: 1 }}
-      fallback={() => <View class="items-center justify-center" style={{ width: 72, height: 40, bgColor: "#b0b9c5" }}><Image src="classic-play.png" style={{ width: 24, height: 24, opacity: .7 }} /></View>} />
-    <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: props.compact ? 4 : 7, width: 192, height: 36, overflow: 1 }}
-      fallback={() => <View class="absolute" style={{ insetT: 3 }}><ClassicSkeleton widths={[180, 138, 80]} /></View>} />
-    <Show when={!props.compact}>
-      <View class="absolute" style={{ insetL: 10, insetT: 49 }}><Text class="text-xs" style={{ textColor: DIM }}>{time(props.item.durationS ?? 0)}</Text></View>
-      <View class="absolute" style={{ insetL: 92, insetT: 47 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${(props.item.views ?? 0) >= 1000 ? `${Math.floor((props.item.views ?? 0) / 1000)}K` : props.item.views ?? 0} views`}</Text></View>
-    </Show>
-  </View>;
 }

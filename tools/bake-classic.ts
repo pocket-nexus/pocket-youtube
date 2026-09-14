@@ -16,20 +16,6 @@ function gradient(g: SKRSContext2D, h: number, stops: [number, string][]) {
 }
 function round(g: SKRSContext2D, x: number, y: number, w: number, h: number, r: number) { g.beginPath(); g.roundRect(x, y, w, h, r); }
 
-bake("classic-linen", 320, 240, g => {
-  g.fillStyle = "#d9dce0"; g.fillRect(0, 0, 320, 240);
-  for (let x = 0; x < 320; x += 4) { g.fillStyle = "#cdd1d7"; g.fillRect(x, 0, 1, 240); }
-  for (let y = 0; y < 240; y += 4) { g.fillStyle = "rgba(255,255,255,.19)"; g.fillRect(0, y, 320, 1); }
-});
-bake("classic-nav", 320, 36, g => {
-  g.fillStyle = gradient(g, 36, [[0,"#fafbfc"],[.48,"#d8dce2"],[.5,"#ccd1d9"],[1,"#b6beca"]]); g.fillRect(0,0,320,36);
-  g.fillStyle="#ffffff";g.fillRect(0,0,320,1);g.fillStyle="#7f8998";g.fillRect(0,35,320,1);
-});
-bake("classic-footer", 320, 28, g => {
-  g.fillStyle=gradient(g,28,[[0,"#eef0f4"],[.48,"#d4d9e0"],[.5,"#c6cdd6"],[1,"#bac2ce"]]);g.fillRect(0,0,320,28);
-  g.fillStyle="#8b96a4";g.fillRect(0,0,320,1);g.fillStyle="#ffffff";g.fillRect(0,1,320,1);
-});
-bake("classic-row",320,64,g=>{g.fillStyle=gradient(g,64,[[0,"#ffffff"],[1,"#f6f7f9"]]);g.fillRect(0,0,320,64);g.fillStyle="#ccd0d6";g.fillRect(0,63,320,1);});
 bake("classic-search-card",296,108,g=>{
   round(g,.5,2.5,295,105,7);g.fillStyle="#b7bfcb";g.fill();
   round(g,.5,.5,295,105,7);g.fillStyle=gradient(g,106,[[0,"#ffffff"],[.65,"#f8f9fb"],[1,"#e6ebf2"]]);g.fill();

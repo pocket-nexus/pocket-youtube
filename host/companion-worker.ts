@@ -243,7 +243,7 @@ const methods = {
   "youtube.artwork": async (raw: string) => {
     const data = JSON.parse(raw), item = items.get(data.videoId);
     if (!item) throw new Error("Unknown result");
-    if (data.kind === "text") return JSON.stringify(await classicArt.text(item));
+    if (data.kind === "text") return JSON.stringify(await classicArt.text(item, Number.isInteger(data.width) ? data.width : 192));
     if (data.kind === "thumbnail") return JSON.stringify(classicArt.thumbnail(data.videoId));
     if (data.kind === "card") {
       if (!svcDir) throw new Error("Card side files need the USB share");

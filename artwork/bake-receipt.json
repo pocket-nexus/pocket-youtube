@@ -1,28 +1,4 @@
 {
-  "classic-linen": {
-    "width": 320,
-    "height": 240,
-    "textureWidth": 512,
-    "textureHeight": 256
-  },
-  "classic-nav": {
-    "width": 320,
-    "height": 36,
-    "textureWidth": 512,
-    "textureHeight": 64
-  },
-  "classic-footer": {
-    "width": 320,
-    "height": 28,
-    "textureWidth": 512,
-    "textureHeight": 32
-  },
-  "classic-row": {
-    "width": 320,
-    "height": 64,
-    "textureWidth": 512,
-    "textureHeight": 64
-  },
   "classic-search-card": {
     "width": 296,
     "height": 108,

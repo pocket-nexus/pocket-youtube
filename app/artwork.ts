@@ -25,10 +25,12 @@ import { offloadResource } from "@pocketjs/framework/resource-offload";
 import { createResourceRuntime, type ResourceCollection } from "@pocketjs/framework/resource-view";
 import type { ResultItem } from "./protocol.ts";
 
-export type ArtworkInput = { videoId: string; kind: "text" | "thumbnail"; revision: string };
+export type ArtworkInput = { videoId: string; kind: "text" | "thumbnail"; revision: string; width: number };
 export type ArtworkCollection = ResourceCollection<ArtworkInput, TextureResource>;
-export const rendition = (item: Pick<ResultItem, "videoId" | "title" | "channel">, kind: ArtworkInput["kind"]): ArtworkInput =>
-  ({ videoId: item.videoId, kind, revision: kind === "text" ? JSON.stringify([item.title, item.channel]) : "72x40-v1" });
+/** The 3DS bottom screen takes 192 px of title; a 480 px screen takes 224. */
+export const TEXT_WIDTH_320 = 192, TEXT_WIDTH_480 = 224;
+export const rendition = (item: Pick<ResultItem, "videoId" | "title" | "channel">, kind: ArtworkInput["kind"], textWidth = TEXT_WIDTH_320): ArtworkInput =>
+  ({ videoId: item.videoId, kind, width: kind === "text" ? textWidth : 72, revision: kind === "text" ? JSON.stringify([item.title, item.channel, textWidth]) : "72x40-v1" });
 
 /** A host-rendered card: the 512-wide texture, plus the right half on a
  *  density-2 device whose card arrives as two 512×128 halves. */
@@ -59,9 +61,10 @@ export function createYoutubeResources() {
     available: () => client.connected() && client.pending() < 4 });
   const artwork = runtime.createCollection<ArtworkInput, string, TextureResource>({
     key: input => `${input.videoId}:${input.kind}:${input.revision}`,
-    maxEntries: 32, maxCost: 1536 * 1024, maxResponseBytes: 5000, maxViews: 12, maxDemandsPerView: 8,
-    cost: input => input.kind === "text" ? 256 * 64 * 4 : 128 * 64 * 4,
-    load: offloadResource(client, "youtube.artwork", input => JSON.stringify({ videoId: input.videoId, kind: input.kind })),
+    maxEntries: 32, maxCost: 1536 * 1024, maxViews: 12, maxDemandsPerView: 8,
+    maxResponseBytes: 8000,
+    cost: input => input.kind === "text" ? 256 * 64 : 128 * 64,
+    load: offloadResource(client, "youtube.artwork", input => JSON.stringify({ videoId: input.videoId, kind: input.kind, width: input.width })),
     retry: { attempts: 120, delayFrames: 6, maxDelayFrames: 60 },
     materialize(raw, input) {
       const data = JSON.parse(raw);
@@ -70,11 +73,13 @@ export function createYoutubeResources() {
         if (data.width !== 72 || data.height !== 40) throw new Error("Invalid thumbnail dimensions");
         return uploadIndexedImage(data);
       }
-      if (data.width !== 192 || data.height !== 36 || typeof data.coverage !== "string" || data.coverage.length !== 2304)
+      const expected = Math.ceil(Math.ceil(input.width * 36 / 4) / 3) * 4;
+      if (data.width !== input.width || data.height !== 36 || typeof data.coverage !== "string" || data.coverage.length !== expected)
         throw new Error("Invalid title dimensions");
-      const handle = uploadCoverage(data.coverage, 192, 36, 0xff332d28);
+      const handle = uploadCoverage(data.coverage, input.width, 36, 0xff332d28);
       if (handle === undefined || handle < 0) throw new Error("Title upload unavailable");
-      return { handle, width: 256, height: 64 };
+      let w = 8; while (w < input.width) w *= 2;
+      return { handle, width: w, height: 64 };
     },
     dispose: value => getOps().freeTexture?.(value.handle),
   });

@@ -16,6 +16,8 @@ import { oskMetrics } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
 import { oskKeyCenter, OskScripter } from "../vendor/pocketjs/tests/osk-script.ts";
 import type { HostOps } from "../vendor/pocketjs/framework/src/host.ts";
+import { createCanvas } from "@napi-rs/canvas";
+import { thumbnailArt, titleArt } from "../host/classic-art.ts";
 
 /** The classic keyboard on the 480x272 screen: the grid at 20 px rows,
  *  docked at the bottom — where a touch must land to press a key. */
@@ -33,6 +35,15 @@ const ITEMS = Array.from({ length: 12 }, (_, i) => ({
   durationS: 754,
   views: 120000 + i,
   card: `thumbs/video${String(i).padStart(6, "0")}.img`,
+}));
+
+/** The renditions a 480-wide row asks for: 224 px title coverage and a
+ *  72×40 sixteen-colour thumbnail, rendered by the real companion code. */
+const TEXTS = new Map(await Promise.all(ITEMS.map(async (item) => [item.videoId, await titleArt(item, 224)] as const)));
+const THUMBS = new Map(ITEMS.map((item, index) => {
+  const canvas = createCanvas(72, 40), ctx = canvas.getContext("2d");
+  ctx.fillStyle = ["#a8cfce", "#162940", "#9086ad", "#daaa7f", "#d3bca2"][index % 5]; ctx.fillRect(0, 0, 72, 40);
+  return [item.videoId, thumbnailArt(new Uint8Array(ctx.getImageData(0, 0, 72, 40).data))] as const;
 }));
 
 interface Companion {
@@ -76,27 +87,34 @@ function companion(options: { session?: number; playError?: string } = {}): Comp
         state.searches.push(data);
         result = { offset: data.offset, items: ITEMS.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < ITEMS.length };
       } else if (request.method === "youtube.artwork") {
-        if (data.kind !== "card") throw new Error(`unexpected rendition ${data.kind}`);
-        state.cards.push(data.videoId);
-        result = { file: `thumbs/${data.videoId}.img`, width: 512, height: 64 };
+        state.cards.push(`${data.videoId}:${data.kind}`);
+        if (data.kind === "text") result = TEXTS.get(data.videoId);
+        else if (data.kind === "thumbnail") result = THUMBS.get(data.videoId);
+        else throw new Error(`unexpected rendition ${data.kind}`);
       }
       replies.push(JSON.stringify({ id: request.id, payload: JSON.stringify(result) }));
       return true;
+    },
+    // The wasm host has no native coverage upload: expand to RGBA here, as
+    // the 3DS journey does.
+    uploadCoverage(coverage: string, width: number, height: number, foreground: number) {
+      const ui = (globalThis as unknown as { ui: HostOps }).ui;
+      const w = 2 ** Math.ceil(Math.log2(width)), h = 2 ** Math.ceil(Math.log2(height));
+      const rgba = new Uint8Array(w * h * 4), bytes = Buffer.from(coverage, "base64");
+      for (let i = 0; i < width * height; i++) rgba.set([foreground & 255, foreground >>> 8 & 255, foreground >>> 16 & 255, (bytes[i >> 2] >> ((i & 3) * 2) & 3) * 85], (Math.floor(i / width) * w + i % width) * 4);
+      return ui.uploadTexture(rgba, w, h, 3);
     },
   };
   return state;
 }
 
-/** Host ops the PSP has and the wasm core lacks: the svc dir, native IMG
- *  side-file loads and the video plane. Textures come from the booted core
- *  (globalThis.ui), which exists by the time a load runs. */
+/** Host ops the PSP has and the wasm core lacks: the svc dir and the video
+ *  plane. Textures come from the booted core (globalThis.ui). */
 function pspOps(): Partial<HostOps> {
-  const card = new Uint8Array(512 * 64 * 4).fill(0xf7);
   const ui = () => (globalThis as unknown as { ui: HostOps }).ui;
   let plane = -1, ticks = 0;
   return {
     svcOpen: () => true,
-    loadImgFile: () => ui().uploadTexture(card, 512, 64, 3),
     videoOpen: () => { ticks = 0; if (plane < 0) plane = ui().uploadTexture(new Uint8Array(256 * 128 * 4), 256, 128, 3); return true; },
     videoTick: () => ticks++,
     videoTexture: () => plane,
@@ -146,9 +164,9 @@ describe("the journey happened", () => {
   test("hello, search page, cards, play, pause — in order, through the companion", () => {
     expect(kinds(main.mac).slice(0, 3)).toEqual(["hello", "play", "pause"]);
     expect(main.mac.searches[0]).toEqual({ query: "q", offset: 0 });
-    // The visible window's cards were requested, not the whole page.
-    expect(main.mac.cards.length).toBeGreaterThanOrEqual(3);
-    expect(main.mac.cards[0]).toBe(ITEMS[0].videoId);
+    // The visible window's renditions were requested, titles first.
+    expect(main.mac.cards.length).toBeGreaterThanOrEqual(6);
+    expect(main.mac.cards[0]).toBe(`${ITEMS[0].videoId}:text`);
   });
 
   test("the player HUD shows the title, the pause state and the legend", () => {
@@ -168,12 +186,32 @@ describe("determinism", () => {
 });
 
 describe("browse chrome", () => {
-  test("the bar carries the title and the field; the footer states the counter and the legend", async () => {
+  test("the field sits in the bar; the footer states the counter and the legend", async () => {
     const browse = await run(Math.ceil(kb.end + 1), kb.events);
-    expect(treeHasText(browse.tree, "Pocket YouTube")).toBe(true);
-    expect(treeHasText(browse.tree, "USB · companion")).toBe(true);
+    expect(treeHasText(browse.tree, "q")).toBe(true);
     // The window prefetches the second page as soon as the first lands.
     expect(treeHasText(browse.tree, "1/10 · ○ play · △ search")).toBe(true);
+  }, 30000);
+
+  test("holding SELECT opens the system sheet with identity, connection state and Close", async () => {
+    // `hold` is level-triggered: SELECT down at +0.5 s, released at +1.1 s.
+    const script: ScriptEvent[] = [...kb.events, { at: kb.end + 0.5, hold: BTN.SELECT }, { at: kb.end + 1.1, hold: 0 }];
+    const r = await run(Math.ceil(kb.end + 2), script);
+    expect(treeHasText(r.tree, "Pocket YouTube 0.3.0")).toBe(true);
+    expect(treeHasText(r.tree, "Companion connected over USB")).toBe(true);
+    expect(treeHasText(r.tree, "Close")).toBe(true);
+    expect(treeHasText(r.tree, "× close · hold SELECT opens this sheet")).toBe(true);
+  }, 30000);
+
+  test("coming back from the player restores the focused row", async () => {
+    const script: ScriptEvent[] = [
+      ...kb.events,
+      { at: kb.end + 0.5, press: BTN.DOWN }, { at: kb.end + 0.9, press: BTN.DOWN },
+      { at: kb.end + 1.5, press: BTN.CIRCLE }, // play row 2
+      { at: kb.end + 3.5, press: BTN.CROSS }, // back to the list
+    ];
+    const r = await run(Math.ceil(kb.end + 5), script);
+    expect(treeHasText(r.tree, "3/10 · ○ play · △ search")).toBe(true);
   }, 30000);
 
   test("walking the d-pad to the end fetches the next page without a sentinel press", async () => {
@@ -189,7 +227,6 @@ describe("browse chrome", () => {
   test("a failed play stays in browse and puts the error in the footer", async () => {
     const r = await run(Math.ceil(kb.end + 3.5), JOURNEY, { companion: companion({ playError: "Video download failed" }) });
     expect(treeHasText(r.tree, "Error: Video download failed")).toBe(true);
-    expect(treeHasText(r.tree, "Pocket YouTube")).toBe(true);
     expect(treeHasText(r.tree, "Paused")).toBe(false);
   }, 30000);
 });
@@ -198,7 +235,7 @@ describe("connect phase", () => {
   test("no companion session keeps the connect screen up", async () => {
     const r = await run(4, [], { companion: companion({ session: 0 }) });
     expect(treeHasText(r.tree, "Connect USB")).toBe(true);
-    expect(treeHasText(r.tree, "Waiting for host")).toBe(true);
+    expect(treeHasText(r.tree, "Waiting for the companion")).toBe(true);
   }, 30000);
 });
 
@@ -255,6 +292,7 @@ describe("touch", () => {
     expect(kinds(r.mac)).toEqual(["hello", "play", "pause", "seek", "stop"]);
     const seek = r.mac.commands.find((c) => c.t === "seek") as unknown as { to: number };
     expect(Math.abs(seek.to - ((300 - 12) / 456) * 754)).toBeLessThan(20);
-    expect(treeHasText(r.tree, "Pocket YouTube")).toBe(true);
+    // Back on the list: the legend is up again.
+    expect(treeHasText(r.tree, "○ play · △ search")).toBe(true);
   }, 30000);
 });
