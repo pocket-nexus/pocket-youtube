@@ -23,7 +23,7 @@
 
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Image, Text, View } from "@pocketjs/framework/components";
-import { CLASSIC } from "@pocketjs/framework/classic";
+import { CLASSIC, ClassicSelection } from "@pocketjs/framework/classic";
 import { createSpriteAnimation, onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
@@ -42,14 +42,18 @@ const DIM = CLASSIC.dim;
 const BLUE = CLASSIC.blue;
 const BG = CLASSIC.background;
 
-/** Row pitch of the results column: 64px row + 4px gap. */
-const ROW_STEP = 68;
-/** The glossy title bar and the footer strip. */
+/** Row pitch of the results column: contiguous 64px rows, the card's own
+ *  bottom rule separating them (the 3DS list shares this rhythm). */
+const ROW_STEP = 64;
+/** The glossy title bar (title, search field, transport) and the footer. */
 const NAV_H = 36;
 const FOOTER_H = 24;
-/** Results viewport height (272 minus bar, search row and footer) — the
- *  scroll clamp keeps the focused row fully inside it. */
-const VIEW_H = 272 - NAV_H - 36 - FOOTER_H;
+/** Results viewport height (272 minus bar and footer) — the scroll clamp
+ *  keeps the focused row fully inside it. */
+const VIEW_H = 272 - NAV_H - FOOTER_H;
+/** The search field's slot inside the title bar. */
+const FIELD_X = 140;
+const FIELD_W = 232;
 /** The classic keyboard's docked height on this surface. */
 const KEYBOARD_H = oskHeight("primary", "classic");
 
@@ -94,18 +98,21 @@ export default function SingleScreen() {
 // ---------------------------------------------------------------------------
 
 /** The glossy bar: a two-stop gloss over a darker base, a white top line
- *  and a dark bottom line, the title embossed in two passes. */
-function TitleBar(props: { title: string; trailing?: string }) {
+ *  and a dark bottom line. The title sits at the left with a 12 px margin,
+ *  embossed in two passes; the search field and the transport label share
+ *  the same 36 px, so the list starts under the bar. */
+function TitleBar(props: { title: string; trailing?: string; children?: any }) {
   return (
     <View class="relative w-full h-[36] bg-gradient-to-b from-[#fafbfc] via-[#ccd1d9] to-[#b6beca]">
       <View class="absolute" style={{ insetL: 0, insetT: 0, width: 480, height: 1, bgColor: "#ffffff" }} />
       <View class="absolute" style={{ insetL: 0, insetT: 35, width: 480, height: 1, bgColor: "#7f8998" }} />
-      <View class="absolute items-center" style={{ insetL: 0, insetT: 11, width: 480 }}>
+      <View class="absolute" style={{ insetL: 12, insetT: 11 }}>
         <Text class="text-sm font-bold" style={{ textColor: "#ffffff" }}>{props.title}</Text>
       </View>
-      <View class="absolute items-center" style={{ insetL: 0, insetT: 10, width: 480 }}>
+      <View class="absolute" style={{ insetL: 12, insetT: 10 }}>
         <Text class="text-sm font-bold" style={{ textColor: "#46566c" }}>{props.title}</Text>
       </View>
+      {props.children}
       <Show when={props.trailing}>
         <View class="absolute" style={{ insetR: 12, insetT: 12 }}>
           <Text class="text-xs" style={{ textColor: DIM }}>{props.trailing}</Text>
@@ -176,28 +183,32 @@ function Browse(props: { store: YoutubeStore }) {
 
   return (
     <View class="flex-col w-full h-full">
-      <TitleBar title="Pocket YouTube" trailing={transportLabel()} />
+      <TitleBar title="Pocket YouTube" trailing={transportLabel()}>
+        <Show when={props.store.phase() === "browse"}>
+          {/* The search field lives in the bar: one 36 px strip holds the
+              title, the field and the transport, and the list gets the rest. */}
+          <View class="absolute flex-col" style={{ insetL: FIELD_X, insetT: 5, width: FIELD_W, height: 26 }}>
+            <TextField
+              value={props.store.query}
+              onInput={props.store.setQuery}
+              onSubmit={() => props.store.search()}
+              placeholder="Search YouTube"
+              theme="classic"
+              hint={`${glyph("cross")} cancel · ${glyph("start")} search`}
+              class="w-full h-[26] flex-col justify-center rounded-lg bg-white border border-[#9aa5b2] px-3 focus:border-[#2676cb] active:bg-[#e3effe]"
+              ref={setOsk}
+            />
+          </View>
+        </Show>
+      </TitleBar>
 
       <Show when={props.store.phase() === "browse"} fallback={<ConnectScreen />}>
-        {/* Search field */}
-        <View class="flex-row items-center px-3" style={{ height: 36, paddingT: 4, paddingB: 4 }}>
-          <TextField
-            value={props.store.query}
-            onInput={props.store.setQuery}
-            onSubmit={() => props.store.search()}
-            placeholder="Search YouTube"
-            theme="classic"
-            hint={`${glyph("cross")} cancel · ${glyph("start")} search`}
-            class="grow h-[28] rounded-lg bg-white border border-[#9aa5b2] px-3 py-1 focus:border-[#2676cb] active:bg-[#e3effe]"
-            ref={setOsk}
-          />
-        </View>
-
         {/* Results: the framework VirtualList — touch pan/fling + tap on
             hosts with contacts, d-pad focus walk everywhere, only the
             visible slice mounted. Rows are host-rendered full-width
-            textures (thumb left, text right, chevron far right). */}
-        <View class="flex-1 mx-3">
+            textures (thumb left, text right, chevron far right), flush
+            with the screen edges like the 3DS list. */}
+        <View class="flex-1">
           <Show
             when={props.store.results().length > 0}
             fallback={
@@ -276,40 +287,30 @@ function ConnectScreen() {
   );
 }
 
-/** The selection wash, drawn ON TOP of the row content — an absolute
- *  overlay can never lose the z-fight against the card image (a border on
- *  the image's own wrapper did, on hardware). A translucent blue tint, a
- *  blue bar at the left edge and a blue rim: the classic selected row. The
- *  tint and the rim are two nodes: on the PSP GE a rounded, bordered node
- *  with a translucent fill paints the border colour as an opaque fill. */
-function Selection(props: { active: boolean }) {
-  return (
-    <Show when={props.active}>
-      <View class="absolute" style={{ insetL: 1, insetT: 1, insetR: 1, insetB: 1, bgColor: "#2676cb22" }} />
-      <View class="absolute inset-0 rounded-md border border-[#9cbce4]" />
-      <View class="absolute" style={{ insetL: 0, insetT: 4, width: 3, height: 56, bgColor: CLASSIC.selectedBar }} />
-    </Show>
-  );
+/** A row's bottom rule — the same 1 px line the host paints under a card. */
+function RowRule() {
+  return <View class="absolute" style={{ insetL: 0, insetB: 0, width: 480, height: 1, bgColor: CLASSIC.rowLine }} />;
 }
 
 /** The infinite-list sentinel: focusable like a row, ○ fetches the next
  *  page of the current search. */
 function LoadMoreRow(props: { active: boolean; busy: boolean }) {
   return (
-    <View class="relative w-full h-[64] rounded-md bg-white border border-[#ccd0d6] items-center justify-center flex-row gap-2">
+    <View class="relative w-full h-[64] bg-white items-center justify-center flex-row gap-2">
       <Show when={props.busy}>
         <Spinner />
       </Show>
       <Text class="text-sm font-bold" style={{ textColor: props.active ? BLUE : DIM }}>
         {props.busy ? "Loading more…" : `Load more · ${glyph("circle")}`}
       </Text>
-      <Selection active={props.active} />
+      <RowRule />
+      <ClassicSelection active={props.active} height={64} />
     </View>
   );
 }
 
 /** One host-rendered full-width result row. Classic hosts: a single 512x64
- *  texture (456 visible — the pow2 tail is clipped by the wrapper).
+ *  texture (480 visible — the pow2 tail is clipped by the wrapper).
  *  Density-2 hosts: the host sends the SAME card as two 512x128 halves
  *  (TEX_MAX_DIM caps uploads at 512) drawn side by side at logical
  *  half-width — 1:1 texels on a 2x panel, sharp text. Textures load through
@@ -355,18 +356,19 @@ function ResultRow(props: { item: ResultItem; active: boolean }) {
   });
 
   return (
-    <View class="relative w-full h-[64] rounded-md overflow-hidden">
+    <View class="relative w-full h-[64] overflow-hidden">
       <Show
         when={handle() >= 0}
         fallback={
-          <View class="w-full h-[64] rounded-md bg-white border border-[#ccd0d6] items-center justify-center">
+          <View class="relative w-full h-[64] bg-white items-center justify-center">
             <Text class="text-xs" style={{ textColor: DIM }}>
               …
             </Text>
+            <RowRule />
           </View>
         }
       >
-        {/* Absolute: an IN-FLOW wide image gets flex-shrunk to the 456
+        {/* Absolute: an IN-FLOW wide image gets flex-shrunk to the 480
             wrapper (observed on hardware as an 11% squeeze — the baked
             corner arcs drifted ~50px into the row). Out of flow it renders
             1:1 and the wrapper's scissor clips the pow2 tail. */}
@@ -383,7 +385,7 @@ function ResultRow(props: { item: ResultItem; active: boolean }) {
           />
         </Show>
       </Show>
-      <Selection active={props.active} />
+      <ClassicSelection active={props.active} height={64} />
     </View>
   );
 }

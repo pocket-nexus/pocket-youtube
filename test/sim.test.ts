@@ -290,7 +290,7 @@ describe("system OSK", () => {
     const [qx, qy] = at("q");
     const [okx, oky] = at("✓");
     const touches = new Map<number, number[]>();
-    for (let f = 150; f < 154; f++) touches.set(f, [__packTouch(1, 240, 54)]); // the field box
+    for (let f = 150; f < 154; f++) touches.set(f, [__packTouch(1, 250, 18)]); // the field in the title bar
     for (let f = 210; f < 214; f++) touches.set(f, [__packTouch(2, qx, qy)]);
     for (let f = 260; f < 264; f++) touches.set(f, [__packTouch(3, okx, oky)]);
     const host = cannedHost();
@@ -315,7 +315,7 @@ describe("touch UX", () => {
     };
     // Search first (buttons — keyboards are covered elsewhere), then TOUCH:
     const base = Math.ceil(kb.end * 60);
-    tapAt(base + 30, 200, 100); //          tap row 0 -> play
+    tapAt(base + 30, 200, 70); //           tap row 0 -> play
     // Player: double-tap the center -> pause…
     tapAt(base + 120, 240, 136, 2);
     tapAt(base + 128, 240, 136, 3);

@@ -243,10 +243,13 @@ describe("cards", () => {
     for (let y = 0; y < CARD_H - 1; y += 7) {
       expect(card[(y * CARD_W + CARD_VISIBLE_W + 20) * 4]).toBe(0xf7);
     }
-    // Corners are rounded in pixels (device scissors are rectangular): the
-    // very corner shows the classic linen page, the straight edges keep content.
-    for (const [x, y] of [[0, 0], [CARD_VISIBLE_W - 1, 0], [0, CARD_H - 1], [CARD_VISIBLE_W - 1, CARD_H - 1]]) {
-      expect(card[(y * CARD_W + x) * 4]).toBe(0xd9);
+    // Rows run flush and square: the right corners are row paper, the left
+    // corners belong to the thumbnail.
+    for (const [x, y] of [[CARD_VISIBLE_W - 1, 0], [CARD_VISIBLE_W - 1, CARD_H - 2]]) {
+      expect(card[(y * CARD_W + x) * 4]).toBe(0xf7);
+    }
+    for (const [x, y] of [[0, 0], [0, CARD_H - 1]]) {
+      expect(card[(y * CARD_W + x) * 4 + 2]).toBe(160);
     }
     expect(card[(30 * CARD_W + 0) * 4 + 2]).toBe(160); // mid-left edge: thumb intact
   });

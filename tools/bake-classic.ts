@@ -30,7 +30,6 @@ bake("classic-footer", 320, 28, g => {
   g.fillStyle="#8b96a4";g.fillRect(0,0,320,1);g.fillStyle="#ffffff";g.fillRect(0,1,320,1);
 });
 bake("classic-row",320,64,g=>{g.fillStyle=gradient(g,64,[[0,"#ffffff"],[1,"#f6f7f9"]]);g.fillRect(0,0,320,64);g.fillStyle="#ccd0d6";g.fillRect(0,63,320,1);});
-bake("classic-row-selected",320,64,g=>{g.fillStyle=gradient(g,64,[[0,"#edf5ff"],[1,"#d4e6fd"]]);g.fillRect(0,0,320,64);g.fillStyle="#9cbce4";g.fillRect(0,63,320,1);g.fillStyle="#397bd4";g.fillRect(0,0,3,63);});
 bake("classic-search-card",296,108,g=>{
   round(g,.5,2.5,295,105,7);g.fillStyle="#b7bfcb";g.fill();
   round(g,.5,.5,295,105,7);g.fillStyle=gradient(g,106,[[0,"#ffffff"],[.65,"#f8f9fb"],[1,"#e6ebf2"]]);g.fill();

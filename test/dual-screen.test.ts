@@ -156,7 +156,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     }
   }
   expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
-  tap(24, 54); await capture("keyboard");
+  tap(24, 18); await capture("keyboard");
   // The framework's system keyboard on the auxiliary surface: the staggered
   // layout at 30 px rows under the classic theme's 14 px legend, docked at
   // the bottom of the 320x240 screen.
@@ -192,7 +192,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   step(1, 180, 80); for (let y = 100; y <= 200; y += 20) step(1, 180, y); step(); step(180);
   expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(firstTitleLoads);
   expect(artworkRequests.filter(key => key === "fixture0000:thumbnail")).toHaveLength(firstThumbLoads);
-  tap(120, 100); step(45); expect(opened).toBe(1);
+  tap(120, 72); step(45); expect(opened).toBe(1);
   await capture("controls");
   tap(160, 150); expect(paused).toBe(true); expect(opened).toBe(1);
   tap(160, 150); expect(paused).toBe(false); expect(opened).toBe(1);
@@ -274,7 +274,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   back(); expect(hasText("Now Playing")).toBe(true);
   tap(272, 20); step(20); completeCap(236, 76);
   const beforeHold = commands.filter(c => c.t === "play").length;
-  step(40, 120, 100); step(); step(60);
+  step(40, 120, 72); step(); step(60);
   expect(downloadCommands.filter(c => c.operation === "start").at(-1)).toMatchObject({ captionsOnly: false, track: "en" });
   expect(commands.filter(c => c.t === "play")).toHaveLength(beforeHold);
   await capture("download-encoding");

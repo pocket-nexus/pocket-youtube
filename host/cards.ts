@@ -20,8 +20,9 @@ import { existsSync } from "node:fs";
 import { parse as parseFont, type Font } from "opentype.js";
 
 export const CARD_W = 512;
-/** On-screen width — the pow2 tail beyond this is clipped by the app. */
-export const CARD_VISIBLE_W = 456;
+/** On-screen width — the pow2 tail beyond this is clipped by the app. Rows
+ *  run flush with the 480 px screen, like the 3DS list. */
+export const CARD_VISIBLE_W = 480;
 export const CARD_H = 64;
 export const THUMB_W = 116;
 export const THUMB_H = 64;
@@ -344,7 +345,6 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
     drawText(rgba, W, H, views, tx, 55 * s, 10 * s, DIM);
   }
   drawText(rgba, W, H, "›", (CARD_VISIBLE_W - 18) * s, 39 * s, 16 * s, DIM);
-  roundCorners(rgba, s);
   return rgba;
 }
 
@@ -395,39 +395,6 @@ export function downscale2(rgba: Uint8Array, w2: number, h2: number): Uint8Array
   return out;
 }
 
-/** App background behind the rows — corner masking must match it
- *  (CLASSIC.background in the device chrome). */
-const PAGE_BG = [0xd9, 0xdd, 0xe3];
-/** Row corner radius; keep in sync with the app's rounded-md (6px). */
-const CORNER_R = 6;
-
-/**
- * Round the visible row's corners in pixels: the device clips with a
- * RECTANGULAR scissor, so a rounded focus ring shows the texture's square
- * corners poking past its arc. Painting the corners with the page
- * background (antialiased against the true distance) is equivalent to a
- * rounded clip because rows always sit on that background.
- */
-function roundCorners(rgba: Uint8Array, s = 1): void {
-  // Rounded-rect SDF over the visible area (pixel centers at +0.5): the
-  // blend factor is the coverage OUTSIDE the pill, antialiased over 1px.
-  const hw = (CARD_VISIBLE_W * s) / 2 - CORNER_R * s;
-  const hh = (CARD_H * s) / 2 - CORNER_R * s;
-  for (let y = 0; y < CARD_H * s; y++) {
-    const qy = Math.abs(y + 0.5 - (CARD_H * s) / 2) - hh;
-    if (qy <= 0) continue; // inside the vertical straight band — never clipped
-    for (let x = 0; x < CARD_VISIBLE_W * s; x++) {
-      const qx = Math.abs(x + 0.5 - (CARD_VISIBLE_W * s) / 2) - hw;
-      if (qx <= 0) continue;
-      const a = Math.min(1, Math.max(0, Math.hypot(qx, qy) - CORNER_R * s + 0.5));
-      if (a <= 0) continue;
-      const o = (y * CARD_W * s + x) * 4;
-      rgba[o] = rgba[o] + (PAGE_BG[0] - rgba[o]) * a;
-      rgba[o + 1] = rgba[o + 1] + (PAGE_BG[1] - rgba[o + 1]) * a;
-      rgba[o + 2] = rgba[o + 2] + (PAGE_BG[2] - rgba[o + 2]) * a;
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Thumbnail fetch + decode (ffmpeg scale/crop; no freetype needed here)

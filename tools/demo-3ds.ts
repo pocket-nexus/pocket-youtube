@@ -138,7 +138,7 @@ function drag(x: number, from: number, to: number, ticks = 36) {
 }
 function record(name: string) { recording = name; recorded = 0; mkdirSync(`${cache}/${name}`, { recursive: true }); }
 function finish() { counts[recording] = recorded; recording = ""; }
-step(30); record("3ds-search"); step(90); tap(110, 170); step(30);
+step(30); record("3ds-search"); step(90); tap(110, 120); step(30);
 // The framework keyboard on the 320x240 bottom screen: staggered rows under
 // the classic legend strip, docked at the bottom.
 const keyAt = (label: string) => oskKeyCenter("staggered", "lower", label, { w: 320, h: 240 }, oskMetrics("staggered", 30, 14));

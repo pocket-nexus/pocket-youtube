@@ -200,6 +200,13 @@ NDSP or device SDK functions. Shared store actions, source resolution,
 search, card text rasterization and scrubber state serve both presentations
 (`docs/MODALITY.md` in PocketJS states the model).
 
+**Saved exists where the host provides `media.playback` and its SD worker**:
+the New 3DS. The PSP host streams a bounded CLUT8 ring from the companion and
+has no media library, no complete-file container and no memory-stick writer,
+so the single-screen presentation carries no Saved screen; adding it means
+those three host pieces first, then the same `mediaLibrary()` calls the
+dual-screen presentation makes.
+
 PocketJS owns native media playback, ticketed streaming, the bounded audio
 format, surface-aware keyboards, auxiliary WASM rendering, resource lifetime
 and bounded indexed-image uploads. It also owns the SD worker, local media

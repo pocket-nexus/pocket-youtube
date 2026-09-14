@@ -1,5 +1,5 @@
 import { dispatchOffload } from "../vendor/pocketjs/tools/offload-provider.ts";
-import { createMediaStreamServer, mediaHeader } from "../vendor/pocketjs/tools/media-stream.ts";
+import { createMediaStreamServer, mediaHeader, type MediaPacket } from "../vendor/pocketjs/tools/media-stream.ts";
 import type { MediaSource } from "../vendor/pocketjs/contracts/spec/media.ts";
 import { search, resolve, thumbnailUrl, type ResolvedStream, type SearchItem } from "./yt.ts";
 import { nativeMedia } from "./native-media.ts";
@@ -43,6 +43,25 @@ function job(work: () => Promise<unknown>) {
   });
   return { job: id };
 }
+/** A googlevideo edge node the resolver hands out can stall the first
+ *  request through the Mac's network path while the next node answers at
+ *  once; a stream that dies before its first packet with a timeout is
+ *  re-resolved (fresh URLs, a fresh node) up to twice before it fails. */
+const RETRYABLE_MEDIA = /timed out|Connection (refused|reset)|Network is unreachable|Input\/output error/i;
+async function* retryingMedia(source: ResolvedStream, seconds: number, signal: AbortSignal, reresolve: () => Promise<ResolvedStream>): AsyncGenerator<MediaPacket> {
+  for (let attempt = 0; ; attempt++) {
+    let yielded = false;
+    try {
+      for await (const packet of nativeMedia(source, seconds, signal)) { yielded = true; yield packet; }
+      return;
+    } catch (error) {
+      if (yielded || attempt >= 2 || signal.aborted || !RETRYABLE_MEDIA.test(String(error))) throw error;
+      console.error(`media: attempt ${attempt + 1} stalled before the first packet; re-resolving ${source.videoId}`);
+      source = await reresolve();
+      if (signal.aborted) return;
+    }
+  }
+}
 async function play(videoId: string, position: number, track?: string) {
   stop(); const owner = generation;
   const source = resolved?.videoId === videoId ? resolved : await resolve(videoId);
@@ -58,7 +77,8 @@ async function play(videoId: string, position: number, track?: string) {
   }
   if (owner !== generation) throw new Error("Playback superseded");
   selectedCaptions = track;
-  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000), signal => withCaptions(nativeMedia(source, seconds, signal), captions, Math.round(seconds * 1000)));
+  active = server.publish(mediaHeader(Math.round(seconds * 1000), source.durationS * 1000),
+    signal => withCaptions(retryingMedia(source, seconds, signal, async () => { resolved = await resolve(videoId); return resolved; }), captions, Math.round(seconds * 1000)));
   return { t: "playing", videoId, title: source.title.slice(0, 160), durationS: source.durationS,
     fps: 30, stream: active.token, source: active, position: seconds, captionTrack: captions.track?.id ?? track ?? source.captionTracks?.[0]?.id, captionLabel: captions.track?.label, captionError: captions.error, hasCaptions: !!source.captionTracks?.length };
 }

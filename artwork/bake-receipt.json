@@ -23,12 +23,6 @@
     "textureWidth": 512,
     "textureHeight": 64
   },
-  "classic-row-selected": {
-    "width": 320,
-    "height": 64,
-    "textureWidth": 512,
-    "textureHeight": 64
-  },
   "classic-search-card": {
     "width": 296,
     "height": 108,

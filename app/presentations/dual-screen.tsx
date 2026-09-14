@@ -10,7 +10,7 @@
 // the single-screen presentation wears on a PSP.
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
 import { AuxiliaryPortal, AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
-import { CLASSIC } from "@pocketjs/framework/classic";
+import { CLASSIC, ClassicSelection } from "@pocketjs/framework/classic";
 import { auxiliaryViewport } from "@pocketjs/framework/display";
 import { getOps, hostViewport } from "@pocketjs/framework/host";
 import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
@@ -245,18 +245,21 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; downl
       { input: rendition(item, "text"), priority: 20 }, { input: rendition(item, "thumbnail"), priority: 30 },
     ]);
   } });
+  // The search field shares the navigation bar with the Saved button, so
+  // the list starts under the bar (the same single strip the PSP bar uses).
   return <View style={{ width: 320, height: 240 }}>
-    <Navigation title="Videos"><Tile x={236} y={5} w={76} h={26} label="Saved" onPress={props.openDownloads} /></Navigation>
-    <View class="absolute" style={{ insetL: 8, insetT: 40, width: 304, height: 28 }}>
-      <Focusable onPress={keyboard.open} class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2]" style={{ overflow: 1 }}>
+    <Navigation title="">
+      <Focusable onPress={keyboard.open} class="absolute flex-col justify-center rounded-lg bg-white px-3 border border-[#9aa5b2] focus:border-[#2676cb] active:bg-[#e3effe]"
+        style={{ insetL: 8, insetT: 5, width: 220, height: 26, overflow: 1 }}>
         <Text class="text-sm" style={{ textColor: props.store.query() || keyboard.isOpen() ? INK : DIM }}>{keyboard.isOpen()
-          ? keyboard.display().slice(Math.max(0, keyboard.caret() - 32), Math.max(0, keyboard.caret() - 32) + 38)
+          ? keyboard.display().slice(Math.max(0, keyboard.caret() - 22), Math.max(0, keyboard.caret() - 22) + 26)
           : props.store.query() || "Search YouTube"}</Text>
       </Focusable>
-    </View>
-    <View class="absolute" style={{ insetL: 0, insetT: 74, width: 320, height: 138 }}>
+      <Tile x={236} y={5} w={76} h={26} label="Saved" onPress={props.openDownloads} />
+    </Navigation>
+    <View class="absolute" style={{ insetL: 0, insetT: 40, width: 320, height: 172 }}>
       <Show when={props.store.results().length} fallback={<SearchWelcome store={props.store} open={keyboard.open} />}>
-        <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={138} overscan={0}
+        <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={172} overscan={0}
           inputActive={() => !keyboard?.isOpen()} ref={setList}
           onRowPress={index => {
             const item = props.store.results()[index], saved = props.downloads.entries().find(entry => entry.key === item.videoId && entry.video);
@@ -453,7 +456,7 @@ function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"
     { input: text(), priority: 0, pin: true }, { input: thumbnail(), priority: 10, pin: true },
   ] });
   return <View style={{ width: 320, height: props.compact ? 48 : 64, overflow: 1 }}>
-    <Show when={!props.compact}><Skin src={props.active?.() ? "classic-row-selected.png" : "classic-row.png"} w={512} h={64} /></Show>
+    <Show when={!props.compact}><Skin src="classic-row.png" w={512} h={64} /></Show>
     <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: props.compact ? 4 : 8, width: 72, height: 40, overflow: 1 }}
       fallback={() => <View class="items-center justify-center" style={{ width: 72, height: 40, bgColor: "#b0b9c5" }}><Image src="classic-play.png" style={{ width: 24, height: 24, opacity: .7 }} /></View>} />
     <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: props.compact ? 4 : 7, width: 192, height: 36, overflow: 1 }}
@@ -464,6 +467,7 @@ function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"
       <View class="absolute" style={{ insetL: 10, insetT: 49 }}><Text class="text-xs" style={{ textColor: DIM }}>{time(props.item.durationS ?? 0)}</Text></View>
       <View class="absolute" style={{ insetL: 92, insetT: 47 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${(props.item.views ?? 0) >= 1000 ? `${Math.floor((props.item.views ?? 0) / 1000)}K` : props.item.views ?? 0} views`}</Text></View>
       <Image src="classic-chevron.png" class="absolute" style={{ insetL: 296, insetT: 18, width: 24, height: 24 }} />
+      <ClassicSelection active={props.active?.() ?? false} height={64} />
     </Show>
   </View>;
 }
