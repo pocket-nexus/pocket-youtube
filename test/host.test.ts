@@ -231,14 +231,14 @@ describe("cards", () => {
     expect(ink).toBeGreaterThan(50);
     // The duration badge darkened the thumb's bottom-right corner.
     expect(card[(56 * CARD_W + 110) * 4 + 2]).toBeLessThan(160);
-    // The chevron leaves ink near the right edge of the VISIBLE row.
-    let chevron = 0;
+    // No chevron: the right edge of the visible row is plain paper.
+    let rightInk = 0;
     for (let y = 24; y < 44; y++) {
-      for (let x = CARD_VISIBLE_W - 20; x < CARD_VISIBLE_W; x++) {
-        if (card[(y * CARD_W + x) * 4] < 0xc0) chevron++;
+      for (let x = CARD_VISIBLE_W - 20; x < CARD_VISIBLE_W - 1; x++) {
+        if (card[(y * CARD_W + x) * 4] < 0xc0) rightInk++;
       }
     }
-    expect(chevron).toBeGreaterThan(4);
+    expect(rightInk).toBe(0);
     // The pow2 tail (clipped on device) stays flat row paper.
     for (let y = 0; y < CARD_H - 1; y += 7) {
       expect(card[(y * CARD_W + CARD_VISIBLE_W + 20) * 4]).toBe(0xf7);

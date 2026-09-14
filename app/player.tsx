@@ -22,7 +22,7 @@ import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
 import * as hot from "@pocketjs/framework/hot";
-import { glyph } from "@pocketjs/framework/modality";
+import { useActions } from "@pocketjs/framework/actions";
 import { hasFeature } from "@pocketjs/framework/platform";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
@@ -87,11 +87,18 @@ export default function Player(props: { store: YoutubeStore }) {
     }
   });
 
-  onButtonPress(BTN.CIRCLE, () => props.store.togglePause());
-  onButtonPress(BTN.START, () => props.store.togglePause());
+  // The screen's intents (docs/HIG.md §2): pause on confirm and on the media
+  // key, ±10 s on the shoulders, back leaves the player. The d-pad's ◁▷ seek
+  // too, as the PSP tradition, without a legend entry of their own.
+  const actions = useActions(() => ({
+    confirm: { label: props.store.player()?.playing ? "pause" : "play", run: () => props.store.togglePause() },
+    media: { run: () => props.store.togglePause() },
+    sectionPrev: { label: "±10 s", run: () => props.store.seekTo(currentS - 10) },
+    sectionNext: { label: "±10 s", run: () => props.store.seekTo(currentS + 10) },
+    back: { label: "back", run: () => props.store.stopPlayback() },
+  }));
   onButtonPress(BTN.LEFT, () => props.store.seekTo(currentS - 10));
   onButtonPress(BTN.RIGHT, () => props.store.seekTo(currentS + 10));
-  onButtonPress(BTN.CROSS, () => props.store.stopPlayback());
 
   // ---- touch (inert without contacts) --------------------------------------
   // Screen thirds: double-tap left/right seeks, double-tap center pauses.
@@ -204,7 +211,7 @@ export default function Player(props: { store: YoutubeStore }) {
         <View class="flex-col gap-1 px-3 py-2 bg-[#000000aa]">
           <Show when={props.store.player()?.ended}>
             <Text class="text-xs font-bold" style={{ textColor: ALERT }}>
-              {`Ended · ◁ rewind · ${glyph("cross")} back`}
+              {`Ended · ◁ rewind · ${actions.legend()}`}
             </Text>
           </Show>
           <Show when={props.store.player() && !props.store.player()!.playing && !props.store.player()!.ended}>
@@ -226,7 +233,7 @@ export default function Player(props: { store: YoutubeStore }) {
             <Text class="text-xs" style={{ textColor: DIM, lineHeight: 13 }}>
               {hasFeature("input.touch")
                 ? "Tap HUD · 2×tap seek · drag bar · ▼ back"
-                : `${glyph("circle")} pause · ◁▷ ±10 s · ${glyph("cross")} back`}
+                : actions.legend()}
             </Text>
           </View>
         </View>

@@ -200,12 +200,25 @@ NDSP or device SDK functions. Shared store actions, source resolution,
 search, card text rasterization and scrubber state serve both presentations
 (`docs/MODALITY.md` in PocketJS states the model).
 
-**Saved exists where the host provides `media.playback` and its SD worker**:
-the New 3DS. The PSP host streams a bounded CLUT8 ring from the companion and
-has no media library, no complete-file container and no memory-stick writer,
-so the single-screen presentation carries no Saved screen; adding it means
-those three host pieces first, then the same `mediaLibrary()` calls the
-dual-screen presentation makes.
+**Saved and caption controls are out of both presentations until the PSP
+can match them.** The New 3DS host provides `media.playback` and the SD
+worker they need; the PSP host streams a bounded CLUT8 ring from the
+companion and has no media library, no complete-file container and no
+memory-stick writer. The download and caption code stays in the store and
+the companion worker; the presentations do not mount it. Adding the feature
+back means those three PSP host pieces first, then the same
+`mediaLibrary()` calls on both devices.
+
+**One companion data layer serves both devices.** `host/companion-worker.ts`
+answers search pages (`youtube.search`), artwork (`youtube.artwork`) and
+playback commands over PocketJS offload. The 3DS reaches it over TCP
+(`bun run serve:3ds`); the PSP reaches the same worker over the PSPLINK
+share through the USB offload provider (`bun run serve:psp`), where cards
+are 512×64 IMG side files the device loads natively and video is the
+`.pkst` ring under `pocket-svc/youtube/`. Rows on both devices are
+demand-driven resources requested for the list's visible window
+(`ClassicList.onWindow`), so a d-pad walk to the end pages in without a
+sentinel press.
 
 PocketJS owns native media playback, ticketed streaming, the bounded audio
 format, surface-aware keyboards, auxiliary WASM rendering, resource lifetime

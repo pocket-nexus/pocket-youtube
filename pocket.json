@@ -8,7 +8,7 @@
   "engine": {
     "capabilities": {
       "requires": ["text.glyphs.baked", "input.buttons"],
-      "enhances": ["input.touch", "input.cursor", "input.analog.left"]
+      "enhances": ["input.touch", "input.cursor", "input.analog.left", "io.offload"]
     }
   },
   "app": {

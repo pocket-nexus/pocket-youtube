@@ -329,7 +329,7 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
   // The row's bottom rule, under the text column only (the thumb runs full height).
   fillRect(rgba, W, H, tw2, H - s, CARD_VISIBLE_W * s - tw2, s, ROW_LINE);
   const tx = tw2 + 10 * s;
-  const maxW = CARD_VISIBLE_W * s - tx - 26 * s; // keep clear of the chevron
+  const maxW = CARD_VISIBLE_W * s - tx - 12 * s;
   const lines = fitLines(input.title, 14 * s, maxW, 2);
   const views = input.views > 0 ? `${fmtViews(input.views)} views` : "";
   if (lines.length > 1) {
@@ -344,7 +344,6 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
     drawText(rgba, W, H, fitLines(input.channel, 10 * s, maxW, 1)[0] ?? "", tx, 39 * s, 10 * s, DIM);
     drawText(rgba, W, H, views, tx, 55 * s, 10 * s, DIM);
   }
-  drawText(rgba, W, H, "›", (CARD_VISIBLE_W - 18) * s, 39 * s, 16 * s, DIM);
   return rgba;
 }
 

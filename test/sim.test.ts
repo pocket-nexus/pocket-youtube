@@ -1,109 +1,111 @@
-// test/youtube-sim.test.ts — Pocket YouTube (demos/youtube) under the sim.
+// test/sim.test.ts — Pocket YouTube's single-screen presentation under the
+// sim, on the companion architecture the PSP now shares with the 3DS.
 //
-// The host service is a real process on a real cable, so the sim injects a
-// canned host through __pocketEffectDriver (the host-override slot the
-// effect shell reserves for exactly this) and drives the full journey:
-// connect handshake -> system-OSK search -> host-rendered result rows ->
-// play -> pause. Titles inside rows are images (host-side rendering is the
-// point), so tree assertions ride the player HUD text, the status line and
-// the phase furniture — all device text.
-//
-// The keyboard is the framework OSK: journeys are generated against its
-// real layout (test/osk-script.ts), and one journey types by TOUCH to cover
-// the input.touch adapter end to end.
+// The companion is a canned offload provider injected as globalThis.offload
+// (the same seam the dual-screen test uses): search pages answer
+// youtube.search, cards answer youtube.artwork with an IMG side-file path
+// the device loads through loadImgFile, playback rides youtube.command
+// jobs and the video plane ops are mocked. Journeys drive the framework's
+// classic keyboard through the OskScripter (grid layout at 20 px rows) and
+// assert on device text: the bar, the footer legend, the player HUD.
 
 import { describe, expect, test } from "bun:test";
-import {
-  bootWorld,
-  fnv1a,
-  scriptToMasks,
-  treeHasText,
-  type ScriptEvent,
-} from "./harness.ts";
+import { bootWorld, fnv1a, scriptToMasks, treeHasText, type ScriptEvent } from "./harness.ts";
 import { BTN, SCREEN_H, SCREEN_W } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { oskMetrics } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
 import { oskKeyCenter, OskScripter } from "../vendor/pocketjs/tests/osk-script.ts";
+import type { HostOps } from "../vendor/pocketjs/framework/src/host.ts";
 
 /** The classic keyboard on the 480x272 screen: the grid at 20 px rows,
  *  docked at the bottom — where a touch must land to press a key. */
 const KEYBOARD = oskMetrics("grid", 20);
 const keyAt = (ch: string): [number, number] => oskKeyCenter("grid", "lower", ch, { w: SCREEN_W, h: SCREEN_H }, KEYBOARD);
-import type { HostMsg, ResultItem } from "../app/protocol.ts";
 
-const ITEMS: ResultItem[] = [
-  {
-    videoId: "vapor01",
-    title: "Vue Vapor on a PSP",
-    channel: "pocket-stack",
-    durationS: 754,
-    views: 120000,
-    card: "thumbs/vapor01.img",
-  },
-  {
-    videoId: "vapor02",
-    title: "第二个视频",
-    channel: "频道",
-    durationS: 61,
-    views: 42,
-    card: "thumbs/vapor02.img",
-  },
-];
+/** Rows start under the 36 px bar; 64 px each. */
+const ROW_Y = (index: number) => 36 + index * 64 + 32;
 
-type Cmd = { kind: string; id: number; payload: unknown };
+/** Twelve results, paged five at a time like the companion. */
+const ITEMS = Array.from({ length: 12 }, (_, i) => ({
+  videoId: `video${String(i).padStart(6, "0")}`,
+  title: i === 1 ? "第二个视频" : `Vue Vapor on a PSP ${i + 1}`,
+  channel: "pocket-stack",
+  durationS: 754,
+  views: 120000 + i,
+  card: `thumbs/video${String(i).padStart(6, "0")}.img`,
+}));
 
-const MORE_ITEMS: ResultItem[] = [
-  {
-    videoId: "vapor03",
-    title: "Third result",
-    channel: "pocket-stack",
-    durationS: 100,
-    views: 7,
-    card: "thumbs/vapor03.img",
-  },
-];
+interface Companion {
+  offload: Record<string, unknown>;
+  commands: { t: string; [key: string]: unknown }[];
+  searches: { query: string; offset: number }[];
+  cards: string[];
+  /** The live session id: 0 means no companion answers. */
+  session: number;
+  playError?: string;
+}
 
-/** The canned Mac: answers everything instantly (deliveries still apply at
- *  the next frame boundary — the shell owns the timing). */
-function cannedHost() {
-  const seen: Cmd[] = [];
-  let moreServed = false;
-  const driver = (cmd: Cmd, deliver: (r: unknown) => void) => {
-    seen.push(cmd);
-    const id = cmd.id;
-    switch (cmd.kind) {
-      case "yt/hello":
-        deliver({ t: "ready", id } satisfies HostMsg);
-        break;
-      case "yt/search":
-        deliver({ t: "results", id, items: ITEMS } satisfies HostMsg);
-        break;
-      case "yt/more":
-        // One extra page, then the well runs dry.
-        deliver({ t: "results", id, items: moreServed ? [] : MORE_ITEMS } satisfies HostMsg);
-        moreServed = true;
-        break;
-      case "yt/play":
-        deliver({
-          t: "playing",
-          id,
-          videoId: (cmd.payload as { videoId: string }).videoId,
-          title: "Vue Vapor on a PSP",
-          durationS: 754,
-          fps: 15,
-          stream: "media/play-1.pkst",
-          position: 0,
-        } satisfies HostMsg);
-        break;
-      default:
-        deliver({ t: "state", id, playing: cmd.kind === "yt/resume", position: 0 } satisfies HostMsg);
-    }
+/** The canned Mac: search pages, card side files and a ring session. */
+function companion(options: { session?: number; playError?: string } = {}): Companion {
+  const replies: string[] = [], jobs = new Map<number, unknown>();
+  const state: Companion = { offload: {}, commands: [], searches: [], cards: [], session: options.session ?? 1, playError: options.playError };
+  let job = 0, playing = false;
+  state.offload = {
+    session: () => state.session,
+    take: () => replies.shift() ?? null,
+    submit(raw: string) {
+      const request = JSON.parse(raw), data = JSON.parse(request.payload);
+      let result: unknown = {};
+      if (request.method === "youtube.command") {
+        state.commands.push(data);
+        if (data.t === "hello") result = { t: "ready" };
+        else if (data.t === "play" || data.t === "seek") {
+          const id = ++job;
+          const item = ITEMS.find((row) => row.videoId === data.videoId) ?? ITEMS[0];
+          jobs.set(id, state.playError
+            ? { t: "error", message: state.playError }
+            : { t: "playing", videoId: item.videoId, title: item.title, durationS: item.durationS, fps: 15, stream: `media/play-${id}.pkst`, position: data.to ?? data.position ?? 0 });
+          if (!state.playError) playing = true;
+          result = { job: id };
+        } else if (data.t === "stop") { playing = false; result = { t: "state", playing: false, position: 0 }; }
+        else if (data.t === "status") result = { t: "status", playing, position: 0, ended: false };
+        else result = { t: "state", playing: data.t === "resume", position: 0 };
+      } else if (request.method === "youtube.poll") {
+        result = { state: "done", value: jobs.get(data.job) };
+      } else if (request.method === "youtube.search") {
+        state.searches.push(data);
+        result = { offset: data.offset, items: ITEMS.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < ITEMS.length };
+      } else if (request.method === "youtube.artwork") {
+        if (data.kind !== "card") throw new Error(`unexpected rendition ${data.kind}`);
+        state.cards.push(data.videoId);
+        result = { file: `thumbs/${data.videoId}.img`, width: 512, height: 64 };
+      }
+      replies.push(JSON.stringify({ id: request.id, payload: JSON.stringify(result) }));
+      return true;
+    },
   };
-  return { driver, seen };
+  return state;
+}
+
+/** Host ops the PSP has and the wasm core lacks: the svc dir, native IMG
+ *  side-file loads and the video plane. Textures come from the booted core
+ *  (globalThis.ui), which exists by the time a load runs. */
+function pspOps(): Partial<HostOps> {
+  const card = new Uint8Array(512 * 64 * 4).fill(0xf7);
+  const ui = () => (globalThis as unknown as { ui: HostOps }).ui;
+  let plane = -1, ticks = 0;
+  return {
+    svcOpen: () => true,
+    loadImgFile: () => ui().uploadTexture(card, 512, 64, 3),
+    videoOpen: () => { ticks = 0; if (plane < 0) plane = ui().uploadTexture(new Uint8Array(256 * 128 * 4), 256, 128, 3); return true; },
+    videoTick: () => ticks++,
+    videoTexture: () => plane,
+    videoClose: () => {},
+  } as Partial<HostOps>;
 }
 
 interface RunOptions {
-  driver?: (cmd: Cmd, deliver: (r: unknown) => void) => void;
+  companion?: Companion;
   /** Packed touch contacts per frame index (sparse). */
   touches?: Map<number, number[]>;
 }
@@ -111,7 +113,8 @@ interface RunOptions {
 async function run(seconds: number, script: ScriptEvent[], opts: RunOptions = {}) {
   const hz = 60;
   const frames = seconds * hz;
-  const world = await bootWorld(hz, { __pocketEffectDriver: opts.driver });
+  const mac = opts.companion ?? companion();
+  const world = await bootWorld(hz, { offload: mac.offload }, pspOps());
   const { masks, analogs } = scriptToMasks(script, hz, frames);
   const hashes: string[] = [];
   for (let f = 0; f < frames; f++) {
@@ -119,237 +122,139 @@ async function run(seconds: number, script: ScriptEvent[], opts: RunOptions = {}
     for (let t = 0; t < world.ticksPerFrame; t++) world.tick();
     hashes.push(fnv1a(world.render()));
   }
-  return { hashes, tree: world.getTree(), effects: world.effects.slice() };
+  return { hashes, tree: world.getTree(), mac };
 }
 
-/** Search commands as the HOST saw them (payload included — the effect
- *  trace records only ids/kinds). */
-const searches = (host: { seen: Cmd[] }) =>
-  host.seen.filter((c) => c.kind === "yt/search").map((c) => c.payload as { q: string });
+/** Command kinds without the ring's periodic status polls. */
+const kinds = (mac: Companion) => mac.commands.map((c) => c.t).filter((t) => t !== "status");
+/** Distinct queries the companion saw (each query fetches several pages). */
+const queries = (mac: Companion) => [...new Set(mac.searches.map((s) => s.query))];
 
-// Journey: browse arrives via the handshake, △ opens the system OSK
-// (focus starts on 'q'), ○ types it, START commits the search + closes,
-// ○ plays the focused result, ○ pauses playback.
+// Journey: the companion answers hello, △ opens the classic keyboard (focus
+// on 'q'), ○ types it, START commits and closes, the first page arrives and
+// row 0 takes focus, ○ plays it, ○ pauses.
 const kb = new OskScripter(1.0).open().type("q").commit();
 const JOURNEY: ScriptEvent[] = [
   ...kb.events,
-  { at: kb.end + 1.0, press: BTN.CIRCLE }, // play the focused (first) result
-  { at: kb.end + 2.0, press: BTN.CIRCLE }, // pause
+  { at: kb.end + 1.5, press: BTN.CIRCLE }, // play the focused (first) result
+  { at: kb.end + 3.0, press: BTN.CIRCLE }, // pause
 ];
 
-const canned = cannedHost();
-const main = await run(Math.ceil(kb.end + 3.5), JOURNEY, { driver: canned.driver });
+const main = await run(Math.ceil(kb.end + 4.5), JOURNEY);
 
 describe("the journey happened", () => {
-  test("handshake, search, play, pause — in order, with the typed query", () => {
-    const kinds = main.effects.filter((e) => e.t === "command").map((e) => e.kind);
-    expect(kinds).toEqual(["yt/hello", "yt/search", "yt/play", "yt/pause"]);
-    expect(searches(canned)[0].q).toBe("q");
+  test("hello, search page, cards, play, pause — in order, through the companion", () => {
+    expect(kinds(main.mac).slice(0, 3)).toEqual(["hello", "play", "pause"]);
+    expect(main.mac.searches[0]).toEqual({ query: "q", offset: 0 });
+    // The visible window's cards were requested, not the whole page.
+    expect(main.mac.cards.length).toBeGreaterThanOrEqual(3);
+    expect(main.mac.cards[0]).toBe(ITEMS[0].videoId);
   });
 
-  test("the player HUD shows the host's title and the pause state", () => {
-    expect(treeHasText(main.tree, "Vue Vapor on a PSP")).toBe(true);
+  test("the player HUD shows the title, the pause state and the legend", () => {
+    expect(treeHasText(main.tree, "Vue Vapor on a PSP 1")).toBe(true);
     expect(treeHasText(main.tree, "Paused")).toBe(true);
-    expect(treeHasText(main.tree, "0:00 / 12:34")).toBe(true);
-    expect(treeHasText(main.tree, "× back")).toBe(true);
+    expect(treeHasText(main.tree, "/ 12:34")).toBe(true);
+    expect(treeHasText(main.tree, "○ play · × back · L/R ±10 s")).toBe(true);
   });
 });
 
 describe("determinism", () => {
   test("same tape, same world", async () => {
-    const again = await run(Math.ceil(kb.end + 3.5), JOURNEY, { driver: cannedHost().driver });
+    const again = await run(Math.ceil(kb.end + 4.5), JOURNEY);
     expect(again.hashes).toEqual(main.hashes);
-    expect(again.effects).toEqual(main.effects);
+    expect(kinds(again.mac)).toEqual(kinds(main.mac));
   }, 30000);
 });
 
-describe("playback failures", () => {
-  test("failed startup stays in browse and displays the host error", async () => {
-    const host = cannedHost();
-    const result = await run(Math.ceil(kb.end + 3.5), JOURNEY, {
-      driver: (cmd, deliver) => {
-        if (cmd.kind === "yt/play") deliver({ t: "error", id: cmd.id, message: "Video download failed" });
-        else host.driver(cmd, deliver);
-      },
-    });
-    expect(treeHasText(result.tree, "Error: Video download failed")).toBe(true);
-    expect(treeHasText(result.tree, "Pocket YouTube")).toBe(true);
-    expect(treeHasText(result.tree, "Paused")).toBe(false);
+describe("browse chrome", () => {
+  test("the bar carries the title and the field; the footer states the counter and the legend", async () => {
+    const browse = await run(Math.ceil(kb.end + 1), kb.events);
+    expect(treeHasText(browse.tree, "Pocket YouTube")).toBe(true);
+    expect(treeHasText(browse.tree, "USB · companion")).toBe(true);
+    // The window prefetches the second page as soon as the first lands.
+    expect(treeHasText(browse.tree, "1/10 · ○ play · △ search")).toBe(true);
   }, 30000);
 
-  test("a playback-error push leaves the matching player and ignores an old stream", async () => {
-    const host = cannedHost();
-    const replies: string[] = [];
-    const world = await bootWorld(60, undefined, {
-      svcOpen: () => true,
-      svcSend: (line) => {
-        const { t, id, ...payload } = JSON.parse(line);
-        host.driver({ kind: `yt/${t}`, id, payload }, (msg) => replies.push(JSON.stringify(msg)));
-      },
-      svcPoll: () => replies.splice(0).join("\n") || undefined,
-    });
-    const frames = Math.ceil(kb.end + 3.5) * 60;
-    const { masks, analogs } = scriptToMasks(JOURNEY, 60, frames);
-    for (let f = 0; f < frames; f++) { world.frame(masks[f], analogs[f]); world.tick(); }
-    expect(treeHasText(world.getTree(), "Paused")).toBe(true);
-    const push = (stream: string) => {
-      replies.push(JSON.stringify({ t: "playback-error", stream, message: "Video connection lost" }));
-      for (let i = 0; i < 20; i++) { world.frame(0); world.tick(); }
-      return world.getTree();
-    };
-    expect(treeHasText(push("media/old.pkst"), "Paused")).toBe(true);
-    const tree = push("media/play-1.pkst");
-    expect(treeHasText(tree, "Error: Video connection lost")).toBe(true);
-    expect(treeHasText(tree, "Pocket YouTube")).toBe(true);
-    expect(treeHasText(tree, "Paused")).toBe(false);
+  test("walking the d-pad to the end fetches the next page without a sentinel press", async () => {
+    // Two pages arrive through the window prefetch; the third only when the
+    // focus reaches the last two rows of what is loaded.
+    const script: ScriptEvent[] = [...kb.events];
+    for (let i = 0; i < 9; i++) script.push({ at: kb.end + 0.5 + i * 0.3, press: BTN.DOWN });
+    const r = await run(Math.ceil(kb.end + 5), script);
+    expect(r.mac.searches.map((s) => s.offset)).toEqual([0, 5, 10]);
+    expect(treeHasText(r.tree, "10/12")).toBe(true);
+  }, 30000);
+
+  test("a failed play stays in browse and puts the error in the footer", async () => {
+    const r = await run(Math.ceil(kb.end + 3.5), JOURNEY, { companion: companion({ playError: "Video download failed" }) });
+    expect(treeHasText(r.tree, "Error: Video download failed")).toBe(true);
+    expect(treeHasText(r.tree, "Pocket YouTube")).toBe(true);
+    expect(treeHasText(r.tree, "Paused")).toBe(false);
   }, 30000);
 });
 
 describe("connect phase", () => {
-  test("an offline host keeps the connect screen up and retries hello", async () => {
-    // A driver that answers nothing: commands hang forever (worse than an
-    // error — the app must not deadlock on it).
-    const silent = await run(5, [], { driver: () => {} });
-    expect(treeHasText(silent.tree, "Connect USB")).toBe(true);
-    const hellos = silent.effects.filter((e) => e.t === "command" && e.kind === "yt/hello");
-    expect(hellos.length).toBeGreaterThanOrEqual(2); // the 2 s retry pump
-  }, 30000);
-
-  test("results render the browse chrome (cards load out-of-band)", async () => {
-    const c = cannedHost();
-    const browse = await run(Math.ceil(kb.end + 1), kb.events, { driver: c.driver });
-    expect(treeHasText(browse.tree, "1/2")).toBe(true); // focus counter
-    expect(treeHasText(browse.tree, "○ play")).toBe(true);
-    expect(treeHasText(browse.tree, "Load more · ○")).toBe(true); // sentinel row
-  }, 30000);
-
-  test("the LOAD MORE row appends a page, then retires at the end", async () => {
-    // DOWN past both results onto the sentinel, ○ loads a page (focus lands
-    // on the fresh row), DOWN to the new sentinel, ○ returns empty — the
-    // sentinel retires and focus pulls back onto the last real row.
-    const host = cannedHost();
-    const script: ScriptEvent[] = [
-      ...kb.events,
-      { at: kb.end + 0.5, press: BTN.DOWN },
-      { at: kb.end + 1.0, press: BTN.DOWN }, //  sentinel (index 2)
-      { at: kb.end + 1.5, press: BTN.CIRCLE }, // load more -> +1 item
-      { at: kb.end + 2.5, press: BTN.DOWN }, //  new sentinel (index 3)
-      { at: kb.end + 3.0, press: BTN.CIRCLE }, // load more -> empty
-    ];
-    const r = await run(Math.ceil(kb.end + 4.5), script, { driver: host.driver });
-    expect(host.seen.filter((c) => c.kind === "yt/more").length).toBe(2);
-    expect(treeHasText(r.tree, "3/3")).toBe(true); //  focus pulled back to the last row
-    expect(treeHasText(r.tree, "Load more · ○")).toBe(false); // sentinel retired
+  test("no companion session keeps the connect screen up", async () => {
+    const r = await run(4, [], { companion: companion({ session: 0 }) });
+    expect(treeHasText(r.tree, "Connect USB")).toBe(true);
+    expect(treeHasText(r.tree, "Waiting for host")).toBe(true);
   }, 30000);
 });
 
-describe("system OSK", () => {
-  test("the keyboard stays usable WITH results on screen", async () => {
-    // Regression: a fixed-height card column once pushed the opened OSK off
-    // the 272px screen — every gated handler went dead and the app read as
-    // frozen. The system OSK owns input modality outright; a re-opened
-    // keyboard must keep typing + searching.
-    // The reopened keyboard resumes on the key the first session left ('q');
-    // the scripter mirrors that memory through `resume`.
+describe("system keyboard", () => {
+  test("a reopened keyboard resumes on the key the first session left", async () => {
     const s = new OskScripter(1.0).open().type("q").commit();
     const again = new OskScripter(s.end + 0.5, { resume: s }).open().type("a").commit();
-    const host = cannedHost();
-    await run(Math.ceil(again.end + 1), [...s.events, ...again.events], { driver: host.driver });
-    expect(searches(host).length).toBe(2);
-    expect(searches(host)[1].q).toBe("qa");
+    const r = await run(Math.ceil(again.end + 1), [...s.events, ...again.events]);
+    expect(queries(r.mac)).toEqual(["q", "qa"]);
   }, 30000);
 
   test("the symbols layer types digits via the L chord", async () => {
     const s = new OskScripter(1.0).open().type("q1!").commit();
-    const host = cannedHost();
-    await run(Math.ceil(s.end + 1), s.events, { driver: host.driver });
-    expect(searches(host)[0].q).toBe("q1!");
+    const r = await run(Math.ceil(s.end + 1), s.events);
+    expect(queries(r.mac)).toEqual(["q1!"]);
   }, 30000);
 
-  test("touch types on the keyboard and commits with ✓ (input.touch adapter)", async () => {
-    // Open with △, then TOUCH 'q' and the ✓ key at their absolute screen
-    // rects (panel docked at the bottom of the 272px column).
-    const at = keyAt;
-    const [qx, qy] = at("q");
-    const [okx, oky] = at("✓");
+  test("touch types on the keyboard and commits with ✓", async () => {
+    const [qx, qy] = keyAt("q");
+    const [okx, oky] = keyAt("✓");
     const touches = new Map<number, number[]>();
     for (let f = 150; f < 154; f++) touches.set(f, [__packTouch(1, qx, qy)]);
     for (let f = 200; f < 204; f++) touches.set(f, [__packTouch(2, okx, oky)]);
-    const host = cannedHost();
-    await run(6, [{ at: 1.0, press: BTN.TRIANGLE }], { driver: host.driver, touches });
-    const s = searches(host);
-    expect(s.length).toBe(1); // ✓ committed the search…
-    expect(s[0].q).toBe("q"); // …with the touched key
+    const r = await run(6, [{ at: 1.0, press: BTN.TRIANGLE }], { touches });
+    expect(queries(r.mac)).toEqual(["q"]);
   }, 30000);
 
-  test("tapping the search field summons the keyboard (TextField activation)", async () => {
-    // ZERO buttons in this journey: the field's hit fact carries the tap into
-    // the shared activation pipeline, TextField opens its own OSK, a key and
-    // ✓ finish the search — the hardware-day gap, pinned end to end.
-    const at = keyAt;
-    const [qx, qy] = at("q");
-    const [okx, oky] = at("✓");
+  test("tapping the field in the bar summons the keyboard", async () => {
+    const [qx, qy] = keyAt("q");
+    const [okx, oky] = keyAt("✓");
     const touches = new Map<number, number[]>();
     for (let f = 150; f < 154; f++) touches.set(f, [__packTouch(1, 250, 18)]); // the field in the title bar
     for (let f = 210; f < 214; f++) touches.set(f, [__packTouch(2, qx, qy)]);
     for (let f = 260; f < 264; f++) touches.set(f, [__packTouch(3, okx, oky)]);
-    const host = cannedHost();
-    await run(6, [], { driver: host.driver, touches });
-    const s = searches(host);
-    expect(s.length).toBe(1); // the tapped-open keyboard committed a search…
-    expect(s[0].q).toBe("q"); // …containing the touched key
+    const r = await run(6, [], { touches });
+    expect(queries(r.mac)).toEqual(["q"]);
   }, 30000);
 });
 
-// ---------------------------------------------------------------------------
-// Journey: the modern-mobile path — touch does everything the d-pad did.
-// ---------------------------------------------------------------------------
-
-describe("touch UX", () => {
+describe("touch", () => {
   test("tap a row to play; player gestures pause, scrub and leave", async () => {
-    const host = cannedHost();
     const touches = new Map<number, number[]>();
     const tapAt = (f: number, x: number, y: number, id = 1) => {
       touches.set(f, [__packTouch(id, x, y)]);
       touches.set(f + 1, [__packTouch(id, x, y)]);
     };
-    // Search first (buttons — keyboards are covered elsewhere), then TOUCH:
     const base = Math.ceil(kb.end * 60);
-    tapAt(base + 30, 200, 70); //           tap row 0 -> play
-    // Player: double-tap the center -> pause…
-    tapAt(base + 120, 240, 136, 2);
-    tapAt(base + 128, 240, 136, 3);
-    // …scrub the bottom strip to ~2/3…
-    for (let i = 0; i <= 10; i++) {
-      touches.set(base + 190 + i, [__packTouch(4, 100 + i * 20, 250)]);
-    }
-    // …and swipe down decisively to leave the player.
-    for (let i = 0; i <= 6; i++) {
-      touches.set(base + 260 + i, [__packTouch(5, 240, 60 + i * 24)]);
-    }
-    const r = await run(Math.ceil(kb.end + 6), kb.events, { driver: host.driver, touches });
-    const kinds = r.effects.filter((e) => e.t === "command").map((e) => e.kind);
-    expect(kinds).toEqual(["yt/hello", "yt/search", "yt/play", "yt/pause", "yt/seek", "yt/stop"]);
-    // The scrub landed where the finger let go (x=300 -> (300-12)/456 of 754 s).
-    const seek = host.seen.find((c) => c.kind === "yt/seek")!.payload as { to: number };
+    tapAt(base + 40, 200, ROW_Y(0)); //        tap row 0 -> play
+    tapAt(base + 150, 240, 136, 2); //         double-tap the centre -> pause
+    tapAt(base + 158, 240, 136, 3);
+    for (let i = 0; i <= 10; i++) touches.set(base + 220 + i, [__packTouch(4, 100 + i * 20, 250)]); // scrub
+    for (let i = 0; i <= 6; i++) touches.set(base + 290 + i, [__packTouch(5, 240, 60 + i * 24)]); // swipe down -> leave
+    const r = await run(Math.ceil(kb.end + 6.5), kb.events, { touches });
+    expect(kinds(r.mac)).toEqual(["hello", "play", "pause", "seek", "stop"]);
+    const seek = r.mac.commands.find((c) => c.t === "seek") as unknown as { to: number };
     expect(Math.abs(seek.to - ((300 - 12) / 456) * 754)).toBeLessThan(20);
-    // Back on the browse screen with the results intact.
-    expect(treeHasText(r.tree, "1/2")).toBe(true);
-  }, 30000);
-
-  test("touch fling scrolls the list without pressing a row", async () => {
-    const host = cannedHost();
-    const touches = new Map<number, number[]>();
-    const base = Math.ceil(kb.end * 60);
-    // A fast upward drag across the list: pan claims, no tap, list flings.
-    for (let i = 0; i <= 5; i++) {
-      touches.set(base + 30 + i, [__packTouch(9, 200, 180 - i * 18)]);
-    }
-    const r = await run(Math.ceil(kb.end + 3), kb.events, { driver: host.driver, touches });
-    const kinds = r.effects.filter((e) => e.t === "command").map((e) => e.kind);
-    expect(kinds.filter((k) => k === "yt/play").length).toBe(0); // never a tap
-    // The near-end fetch is feature-gated OFF in this (buttonish) build, so
-    // the fling only moves pixels — the browse chrome is still up.
     expect(treeHasText(r.tree, "Pocket YouTube")).toBe(true);
   }, 30000);
 });

@@ -13,7 +13,12 @@ of the scroll position, with cached titles and thumbnails.
 One `pocket.json` serves every device. Its `dual-screen` presentation is
 addressed to the two-screen modality; the PSP and Vita compile the
 single-screen baseline with the same classic chrome and the same keyboard in
-its d-pad grid layout.
+its d-pad grid layout. **Both presentations run on one companion data
+layer**: search pages and row artwork are demand-driven resources the list
+requests for its visible window, and the presentations declare their button
+intents once (`useActions`) so the footer legend and the bottom-screen tiles
+come from the same declaration. Saved videos and caption controls are out of
+the 3DS presentation until the PSP host can match them.
 
 **Hold a video row to save it on the 3DS SD card.** The Saved screen shows
 conversion progress, SD transfer progress and completed downloads. Saved
@@ -122,16 +127,19 @@ bun run psp -r       # → dist/EBOOT.PBP
 # terminal 1 — mount a directory on the PSP as host0:
 usbhostfs_pc -b 10000 <your usbhostfs root>
 
-# terminal 2 — the companion service (network + pixels)
-bun run serve -- --dir <your usbhostfs root>
+# terminal 2 — the companion over the share: offload records under
+# pocket-offload/, cards and the video ring under pocket-svc/youtube/
+bun run serve:psp -- --dir <your usbhostfs root>
 
 # run the EBOOT on the device (XMB from a Memory Stick, or ldstart the
 # .prx from crates/pocket-youtube-psp/target/... over PSPLINK)
 ```
 
-The app boots to `CONNECT USB`, handshakes with the service through the
-mailbox, and you are searching. `△` opens the keyboard, `START` searches,
-`○` plays, `◁/▷` seek ±10 s.
+The app boots to `Connect USB`, handshakes with the companion, and you are
+searching. `△` opens the keyboard, `START` searches, `○` plays, `L/R` and
+`◁/▷` seek ±10 s, `×` leaves the player. The footer states the live legend.
+`bun run serve` remains the legacy mailbox companion for the Vita's TCP
+transport and the browser dev host.
 
 ## PS Vita
 

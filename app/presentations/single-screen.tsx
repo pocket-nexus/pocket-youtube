@@ -1,92 +1,65 @@
 // app/presentations/single-screen.tsx — Pocket YouTube on one 480×272
 // screen: the PSP over USB, the Vita over WiFi.
 //
-// No WiFi anywhere in the PSP design: a companion Mac service
-// (host/serve.ts) owns the network and the pixels, and everything reaches
-// the device through the PSPLINK usbhostfs share — search results as
-// host-rendered full-width row images (CJK titles included; the PSP atlas
-// never could), the video itself as a CLUT8+PCM ring stream on the native
-// video plane.
+// The HIG's buttons modality (docs/HIG.md §2): one 36 px bar with the title,
+// the search field and the transport, a flush list of 64 px rows with the
+// selection wash on the focused row, a 24 px footer that states the live
+// button legend. The presentation declares intents (useActions) and the
+// framework spells them with the device's glyphs.
 //
-// The look is the classic light chrome the dual-screen presentation wears
-// on the 3DS: linen background, glossy bars, white rows with a blue
-// selection wash, and the framework's classic keyboard. Text entry rides
-// the SYSTEM keyboard (@pocketjs/framework/osk): △ opens it, and while it
-// is up every handler below is muted by the framework's modal block.
-// START/✓ commits the search. The keyboard follows this surface's
-// modality — the d-pad grid on a PSP, the phone layout on a Vita panel.
-//
-// The results column is the framework VirtualList: one component, layered
-// input — touch pan/fling + tap-to-play where the host delivers contacts
-// (Vita), the d-pad focus walk everywhere (PSP unchanged), hover-focus
-// under the virtual cursor. Only the visible slice mounts.
+// Data: the same companion the 3DS uses. Search pages and card artwork are
+// demand-driven resources (search.ts, artwork.ts); the list reports its
+// window every frame and the runtime loads what the window needs inside a
+// per-frame budget, so a d-pad walk to the end pages in without a sentinel
+// press. On the PSP the companion speaks offload over the PSPLINK share
+// (host/companion-usb.ts) and cards arrive as IMG side files the device
+// loads natively; the Vita keeps its TCP mailbox behind the same interfaces.
+// Video is the CLUT8+PCM ring on the native plane (player.tsx).
 
-import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, Show } from "solid-js";
+import { useActions } from "@pocketjs/framework/actions";
+import { CLASSIC, ClassicBar, ClassicFooter, ClassicList, ClassicSkeleton, ClassicSpinner } from "@pocketjs/framework/classic";
 import { Image, Text, View } from "@pocketjs/framework/components";
-import { CLASSIC, ClassicSelection } from "@pocketjs/framework/classic";
-import { createSpriteAnimation, onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
-import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
-import { glyph } from "@pocketjs/framework/modality";
+import { onFrame } from "@pocketjs/framework/lifecycle";
 import { oskHeight, TextField, type OskController } from "@pocketjs/framework/osk";
 import { hasFeature, platform } from "@pocketjs/framework/platform";
-import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
-import type { NodeMirror } from "@pocketjs/framework/renderer";
-import { loadCard, pumpDriver } from "../driver.ts";
+import { ResourceImage } from "@pocketjs/framework/resource";
+import { createResourceView } from "@pocketjs/framework/resource-view";
+import type { VirtualListHandle } from "@pocketjs/framework/virtual-list";
+import { cardRendition, createLegacyCards, createYoutubeResources, type CardCollection } from "../artwork.ts";
+import { pumpDriver } from "../driver.ts";
 import Player from "../player.tsx";
+import { createCompanionSearch, createLegacySearch } from "../search.ts";
 import { createYoutubeStore, type YoutubeStore } from "../store.ts";
 import type { ResultItem } from "../protocol.ts";
 
-const INK = CLASSIC.ink;
-const DIM = CLASSIC.dim;
-const BLUE = CLASSIC.blue;
-const BG = CLASSIC.background;
-
-/** Row pitch of the results column: contiguous 64px rows, the card's own
- *  bottom rule separating them (the 3DS list shares this rhythm). */
-const ROW_STEP = 64;
-/** The glossy title bar (title, search field, transport) and the footer. */
-const NAV_H = 36;
-const FOOTER_H = 24;
-/** Results viewport height (272 minus bar and footer) — the scroll clamp
- *  keeps the focused row fully inside it. */
-const VIEW_H = 272 - NAV_H - FOOTER_H;
-/** The search field's slot inside the title bar. */
-const FIELD_X = 140;
-const FIELD_W = 232;
+const W = 480, H = 272;
+const BAR_H = 36, FOOTER_H = 24, ROW_H = 64;
+/** The list viewport between the bar and the footer. */
+const LIST_H = H - BAR_H - FOOTER_H;
+/** The search field's slot inside the bar. */
+const FIELD_X = 140, FIELD_W = 232;
 /** The classic keyboard's docked height on this surface. */
 const KEYBOARD_H = oskHeight("primary", "classic");
 
-const SPINNER_FRAMES = [
-  "spin-00.svg",
-  "spin-01.svg",
-  "spin-02.svg",
-  "spin-03.svg",
-  "spin-04.svg",
-  "spin-05.svg",
-  "spin-06.svg",
-  "spin-07.svg",
-];
-
-/** The busy spinner (baked SVG frames, ~7.5 rev/s at step 3). */
-function Spinner(props: { size?: number }) {
-  const src = createSpriteAnimation(SPINNER_FRAMES, { frameStep: 3 });
-  return <Image src={src()} style={{ width: props.size ?? 22, height: props.size ?? 22 }} />;
-}
-
 export default function SingleScreen() {
-  const store = createYoutubeStore();
+  // One data layer for every device: the companion's pages and cards where
+  // io.offload exists (PSP over USB), the legacy mailbox elsewhere (Vita).
+  const companion = hasFeature("io.offload") ? createYoutubeResources() : undefined;
+  const cards = companion ? companion.cards : createLegacyCards().cards;
+  const store = createYoutubeStore(companion ? createCompanionSearch(companion.runtime) : createLegacySearch());
 
-  // The one per-frame pump: driver IO (svc poll + card loader) plus the
-  // connect-phase retry. Registered at the root so it outlives screens.
+  // The one per-frame pump: driver IO plus the connect-phase retry,
+  // registered at the root so it outlives screens.
   onFrame(() => {
     pumpDriver();
     store.connectTick();
   });
 
   return (
-    <View class="w-full h-full flex-col" style={{ bgColor: BG }}>
-      <Show when={store.phase() === "player"} fallback={<Browse store={store} />}>
+    <View class="w-full h-full flex-col" style={{ bgColor: CLASSIC.background }}>
+      <Show when={store.phase() === "player"} fallback={<Browse store={store} cards={cards} />}>
         <Player store={store} />
       </Show>
     </View>
@@ -94,99 +67,49 @@ export default function SingleScreen() {
 }
 
 // ---------------------------------------------------------------------------
-// Classic chrome
+// Browse: bar · list · footer
 // ---------------------------------------------------------------------------
 
-/** The glossy bar: a two-stop gloss over a darker base, a white top line
- *  and a dark bottom line. The title sits at the left with a 12 px margin,
- *  embossed in two passes; the search field and the transport label share
- *  the same 36 px, so the list starts under the bar. */
-function TitleBar(props: { title: string; trailing?: string; children?: any }) {
-  return (
-    <View class="relative w-full h-[36] bg-gradient-to-b from-[#fafbfc] via-[#ccd1d9] to-[#b6beca]">
-      <View class="absolute" style={{ insetL: 0, insetT: 0, width: 480, height: 1, bgColor: "#ffffff" }} />
-      <View class="absolute" style={{ insetL: 0, insetT: 35, width: 480, height: 1, bgColor: "#7f8998" }} />
-      <View class="absolute" style={{ insetL: 12, insetT: 11 }}>
-        <Text class="text-sm font-bold" style={{ textColor: "#ffffff" }}>{props.title}</Text>
-      </View>
-      <View class="absolute" style={{ insetL: 12, insetT: 10 }}>
-        <Text class="text-sm font-bold" style={{ textColor: "#46566c" }}>{props.title}</Text>
-      </View>
-      {props.children}
-      <Show when={props.trailing}>
-        <View class="absolute" style={{ insetR: 12, insetT: 12 }}>
-          <Text class="text-xs" style={{ textColor: DIM }}>{props.trailing}</Text>
-        </View>
-      </Show>
-    </View>
-  );
-}
-
-function Footer(props: { text: string; alert?: boolean }) {
-  return (
-    <View class="relative w-full h-[24] items-center justify-center bg-gradient-to-b from-[#eef0f4] via-[#c6cdd6] to-[#bac2ce]">
-      <View class="absolute" style={{ insetL: 0, insetT: 0, width: 480, height: 1, bgColor: "#8b96a4" }} />
-      <View class="absolute" style={{ insetL: 0, insetT: 1, width: 480, height: 1, bgColor: "#ffffff" }} />
-      <Text class="text-xs" style={{ textColor: props.alert ? "#a63838" : DIM, lineHeight: 12 }}>{props.text}</Text>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Connect + browse
-// ---------------------------------------------------------------------------
-
-function Browse(props: { store: YoutubeStore }) {
-  // The field owns its OSK (TextField, docs/TOUCH.md §1); the controller
-  // ref keeps the squeeze layout and the △ shortcut.
+function Browse(props: { store: YoutubeStore; cards: CardCollection }) {
   const [osk, setOsk] = createSignal<OskController | null>(null);
-
-  // Rows the list serves: real results plus the LOAD MORE sentinel.
-  const rowCount = () => props.store.results().length + (props.store.hasMore() ? 1 : 0);
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   const focusedRow = () => list()?.focusedIndex() ?? 0;
-  // Opening the OSK squeezes the list viewport, never the OSK.
-  const listH = () => (osk()?.isOpen() ? VIEW_H - KEYBOARD_H : VIEW_H);
+  // Opening the keyboard squeezes the list, never the keyboard.
+  const listH = () => (osk()?.isOpen() ? LIST_H - KEYBOARD_H : LIST_H);
+  const browsing = () => props.store.phase() === "browse";
 
-  // While the OSK is open these are muted by its modal block — the keyboard
-  // owns every button until it closes. The d-pad row walk and ○-to-play now
-  // ride the framework focus manager through the VirtualList's rows.
-  onButtonPress(BTN.TRIANGLE, () => osk()?.open());
-  onButtonPress(BTN.START, () => props.store.search());
+  // The intents this screen offers. `confirm` is the focused row's press,
+  // so it carries a label and no run; `action` opens the keyboard.
+  const actions = useActions(() => ({
+    confirm: { label: "play", when: () => browsing() && props.store.results().length > 0 },
+    action: { label: "search", run: () => osk()?.open(), when: browsing },
+  }));
 
-  // A fresh search replaces the list: focus row 0 (the same entry point the
-  // d-pad walk uses) so ○ plays the first result immediately.
+  // A fresh search focuses row 0, the same entry point the d-pad walk uses.
   createEffect(() => {
     props.store.searchSerial();
-    // Depend on the handle too: the delivery that brings the first results
-    // also MOUNTS the list — the ref lands after this effect's first run.
     list()?.focusRow(0);
   });
 
-  const pressRow = (i: number): void => {
-    const item = props.store.results()[i];
-    if (item) props.store.play(item);
-    else if (props.store.hasMore()) props.store.loadMore(); // the sentinel row
-  };
-
-  const transportLabel = () =>
+  const transport = () =>
     props.store.phase() === "connect"
       ? "Waiting for host"
       : props.store.transport() === "usb"
         ? platform.target === "vita" ? "WiFi · PKNT" : "USB · PSPLINK"
-        : "HTTP · dev";
+        : props.store.transport() === "companion" ? "USB · companion" : "HTTP · dev";
 
-  const hint = () =>
-    hasFeature("input.touch")
-      ? `Tap to play · ${glyph("triangle")} search`
-      : `↕ browse · ${glyph("circle")} play · ${glyph("triangle")} search`;
+  const footer = () => {
+    const status = props.store.status();
+    if (status) return status;
+    const count = props.store.results().length;
+    const counter = count > 0 ? `${Math.min(focusedRow(), count - 1) + 1}/${count} · ` : "";
+    return `${counter}${actions.legend()}`;
+  };
 
   return (
     <View class="flex-col w-full h-full">
-      <TitleBar title="Pocket YouTube" trailing={transportLabel()}>
-        <Show when={props.store.phase() === "browse"}>
-          {/* The search field lives in the bar: one 36 px strip holds the
-              title, the field and the transport, and the list gets the rest. */}
+      <ClassicBar width={W} title="Pocket YouTube" trailing={transport()}>
+        <Show when={browsing()}>
           <View class="absolute flex-col" style={{ insetL: FIELD_X, insetT: 5, width: FIELD_W, height: 26 }}>
             <TextField
               value={props.store.query}
@@ -194,82 +117,36 @@ function Browse(props: { store: YoutubeStore }) {
               onSubmit={() => props.store.search()}
               placeholder="Search YouTube"
               theme="classic"
-              hint={`${glyph("cross")} cancel · ${glyph("start")} search`}
               class="w-full h-[26] flex-col justify-center rounded-lg bg-white border border-[#9aa5b2] px-3 focus:border-[#2676cb] active:bg-[#e3effe]"
               ref={setOsk}
             />
           </View>
         </Show>
-      </TitleBar>
+      </ClassicBar>
 
-      <Show when={props.store.phase() === "browse"} fallback={<ConnectScreen />}>
-        {/* Results: the framework VirtualList — touch pan/fling + tap on
-            hosts with contacts, d-pad focus walk everywhere, only the
-            visible slice mounted. Rows are host-rendered full-width
-            textures (thumb left, text right, chevron far right), flush
-            with the screen edges like the 3DS list. */}
+      <Show when={browsing()} fallback={<ConnectScreen />}>
         <View class="flex-1">
           <Show
             when={props.store.results().length > 0}
-            fallback={
-              // The empty state shrinks with the list so the keyboard never
-              // covers its copy.
-              <View class="items-center justify-center flex-col gap-2" style={{ height: listH() }}>
-                <Show when={props.store.searching()}>
-                  <Spinner size={26} />
-                </Show>
-                <Text class="text-sm font-bold" style={{ textColor: props.store.status().startsWith("Error") ? "#a63838" : INK }}>
-                  {props.store.status() || (props.store.searching() ? "Searching…" : "Search videos")}
-                </Text>
-                <Show when={!props.store.status() && !props.store.searching()}>
-                  <Text class="text-xs" style={{ textColor: DIM }}>
-                    {hasFeature("input.touch") ? "Tap the field to type." : `${glyph("triangle")} opens the keyboard.`}
-                  </Text>
-                </Show>
-              </View>
-            }
+            fallback={<EmptyState store={props.store} height={listH()} />}
           >
-            <VirtualList
-              count={rowCount()}
-              rowHeight={ROW_STEP}
+            <ClassicList
+              count={props.store.results().length}
+              rowHeight={ROW_H}
               height={listH()}
-              overscan={68}
               inputActive={() => !osk()?.isOpen()}
-              onRowPress={pressRow}
-              // Touch scrolls fetch the next page as the end approaches;
-              // the d-pad flow keeps its explicit ○ on the sentinel row
-              // (nearEnd would double-fetch under the chase scroll).
-              onNearEnd={
-                hasFeature("input.touch")
-                  ? () => {
-                      if (props.store.hasMore() && !props.store.searching()) props.store.loadMore();
-                    }
-                  : undefined
-              }
+              onRowPress={(i) => props.store.play(props.store.results()[i])}
+              hasMore={props.store.hasMore}
+              loadingMore={props.store.searching}
+              onLoadMore={props.store.loadMore}
+              onWindow={(first, visible, velocity) => props.store.prefetch(first, visible, velocity)}
               ref={setList}
-              renderRow={(i) => (
-                <Show
-                  when={i < props.store.results().length}
-                  fallback={
-                    <LoadMoreRow active={focusedRow() === i} busy={props.store.searching()} />
-                  }
-                >
-                  <ResultRow item={props.store.results()[i]} active={focusedRow() === i} />
-                </Show>
-              )}
+              renderRow={(i) => <CardRow item={props.store.results()[i]} cards={props.cards} />}
             />
           </Show>
         </View>
-        <Footer
-          text={
-            props.store.status() ||
-            (props.store.results().length > 0
-              ? `${Math.min(focusedRow(), props.store.results().length - 1) + 1}/${props.store.results().length} · ${hint()}`
-              : hint())
-          }
-          alert={props.store.status().startsWith("Error")}
-        />
       </Show>
+      <ClassicFooter width={W} text={footer()} alert={props.store.status().startsWith("Error")} />
     </View>
   );
 }
@@ -277,115 +154,67 @@ function Browse(props: { store: YoutubeStore }) {
 function ConnectScreen() {
   return (
     <View class="flex-1 items-center justify-center flex-col gap-2">
-      <Text class="text-sm font-bold animate-pulse" style={{ textColor: INK }}>
+      <Text class="text-sm font-bold animate-pulse" style={{ textColor: CLASSIC.ink }}>
         Connect USB and start the Mac companion
       </Text>
-      <Text class="text-xs" style={{ textColor: DIM }}>
-        {"bun host/serve.ts --dir <usbhostfs root>"}
+      <Text class="text-xs" style={{ textColor: CLASSIC.dim }}>
+        {"bun run serve:psp"}
       </Text>
     </View>
   );
 }
 
-/** A row's bottom rule — the same 1 px line the host paints under a card. */
-function RowRule() {
-  return <View class="absolute" style={{ insetL: 0, insetB: 0, width: 480, height: 1, bgColor: CLASSIC.rowLine }} />;
-}
-
-/** The infinite-list sentinel: focusable like a row, ○ fetches the next
- *  page of the current search. */
-function LoadMoreRow(props: { active: boolean; busy: boolean }) {
+function EmptyState(props: { store: YoutubeStore; height: number }) {
+  const error = () => props.store.status().startsWith("Error") || props.store.status().includes("unavailable");
   return (
-    <View class="relative w-full h-[64] bg-white items-center justify-center flex-row gap-2">
-      <Show when={props.busy}>
-        <Spinner />
+    <View class="items-center justify-center flex-col gap-2" style={{ height: props.height }}>
+      <Show when={props.store.searching()}>
+        <ClassicSpinner size={24} />
       </Show>
-      <Text class="text-sm font-bold" style={{ textColor: props.active ? BLUE : DIM }}>
-        {props.busy ? "Loading more…" : `Load more · ${glyph("circle")}`}
+      <Text class="text-sm font-bold" style={{ textColor: error() ? "#a63838" : CLASSIC.ink }}>
+        {props.store.status() || (props.store.searching() ? "Searching…" : "Search videos")}
       </Text>
-      <RowRule />
-      <ClassicSelection active={props.active} height={64} />
+      <Show when={!props.store.status() && !props.store.searching()}>
+        <Text class="text-xs" style={{ textColor: CLASSIC.dim }}>
+          {hasFeature("input.touch") ? "Tap the field to type." : "Titles, channels and topics."}
+        </Text>
+      </Show>
     </View>
   );
 }
 
-/** One host-rendered full-width result row. Classic hosts: a single 512x64
- *  texture (480 visible — the pow2 tail is clipped by the wrapper).
- *  Density-2 hosts: the host sends the SAME card as two 512x128 halves
- *  (TEX_MAX_DIM caps uploads at 512) drawn side by side at logical
- *  half-width — 1:1 texels on a 2x panel, sharp text. Textures load through
- *  the driver's one-per-frame queue and are freed with the row. */
-function ResultRow(props: { item: ResultItem; active: boolean }) {
-  const hd = props.item.cardHD;
-  const [handle, setHandle] = createSignal(-1);
-  const [handleR, setHandleR] = createSignal(-1);
-  let node: NodeMirror | undefined;
-  let nodeR: NodeMirror | undefined;
-  let alive = true;
-
-  loadCard(hd ? hd[0] : props.item.card, (h) => {
-    if (!alive) {
-      if (h >= 0) getOps().freeTexture?.(h);
-      return;
-    }
-    setHandle(h);
-  });
-  if (hd) {
-    loadCard(hd[1], (h) => {
-      if (!alive) {
-        if (h >= 0) getOps().freeTexture?.(h);
-        return;
-      }
-      setHandleR(h);
-    });
-  }
-  onCleanup(() => {
-    alive = false;
-    const h = handle();
-    if (h >= 0) getOps().freeTexture?.(h);
-    const hr = handleR();
-    if (hr >= 0) getOps().freeTexture?.(hr);
-  });
-  createEffect(() => {
-    const h = handle();
-    if (h >= 0 && node) getOps().setImage(node.id, h);
-  });
-  createEffect(() => {
-    const hr = handleR();
-    if (hr >= 0 && nodeR) getOps().setImage(nodeR.id, hr);
-  });
-
+/** One host-rendered card row: the 512×64 IMG texture, drawn 1:1 and
+ *  clipped to the screen by the row; a density-2 device draws its two 512×128
+ *  halves side by side at logical half-width. While the card is pending the
+ *  row shows skeleton lines on white; the framework paints the selection
+ *  wash above the row. */
+function CardRow(props: { item: ResultItem; cards: CardCollection }) {
+  const input = () => cardRendition(props.item);
+  const view = createResourceView(props.cards, { demand: () => [{ input: input(), priority: 0, pin: true }] });
+  const state = () => view.state(input());
   return (
-    <View class="relative w-full h-[64] overflow-hidden">
-      <Show
-        when={handle() >= 0}
-        fallback={
-          <View class="relative w-full h-[64] bg-white items-center justify-center">
-            <Text class="text-xs" style={{ textColor: DIM }}>
-              …
-            </Text>
-            <RowRule />
+    <View class="relative w-full h-[64] bg-white overflow-hidden">
+      <ResourceImage
+        state={state}
+        class="absolute"
+        style={{ insetL: 0, insetT: 0, width: props.item.cardHD ? 256 : 512, height: 64 }}
+        fallback={() => (
+          <View class="absolute" style={{ insetL: 128, insetT: 14 }}>
+            <ClassicSkeleton widths={[220, 160, 90]} />
           </View>
-        }
-      >
-        {/* Absolute: an IN-FLOW wide image gets flex-shrunk to the 480
-            wrapper (observed on hardware as an 11% squeeze — the baked
-            corner arcs drifted ~50px into the row). Out of flow it renders
-            1:1 and the wrapper's scissor clips the pow2 tail. */}
+        )}
+      />
+      <Show when={props.item.cardHD && state().status === "ready"}>
         <Image
-          nodeRef={(n) => (node = n)}
           class="absolute"
-          style={{ insetT: 0, insetL: 0, width: hd ? 256 : 512, height: 64 }}
+          style={{ insetL: 256, insetT: 0, width: 256, height: 64 }}
+          nodeRef={(n) => {
+            const value = view.value(input());
+            if (value?.right !== undefined) getOps().setImage(n.id, value.right);
+          }}
         />
-        <Show when={hd && handleR() >= 0}>
-          <Image
-            nodeRef={(n) => (nodeR = n)}
-            class="absolute"
-            style={{ insetT: 0, insetL: 256, width: 256, height: 64 }}
-          />
-        </Show>
       </Show>
-      <ClassicSelection active={props.active} height={64} />
+      <View class="absolute" style={{ insetL: 0, insetB: 0, width: W, height: 1, bgColor: CLASSIC.rowLine }} />
     </View>
   );
 }

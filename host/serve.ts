@@ -295,6 +295,9 @@ async function dispatch(cmd: DeviceCmd, ctx: TransportCtx): Promise<HostMsg | nu
       session?.close();
       session = null;
       return { t: "state", id: cmd.id, playing: false, position: 0 };
+    case "status":
+      // The mailbox pushes `ended` itself; a poll answers the live state.
+      return { t: "status", id: cmd.id, playing: session !== null, position: session?.positionBase ?? 0, ended: false };
   }
 }
 
