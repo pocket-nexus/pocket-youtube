@@ -26,9 +26,14 @@ export const CARD_H = 64;
 export const THUMB_W = 116;
 export const THUMB_H = 64;
 
-const BG = [0x14, 0x1c, 0x26];
-const INK = [0xe8, 0xf0, 0xf2];
-const DIM = [0x8f, 0xa3, 0xad];
+// The classic light row: white paper, body ink, secondary ink — the same
+// tokens the device chrome takes from @pocketjs/framework/classic.
+const BG = [0xf7, 0xf8, 0xfa];
+const INK = [0x28, 0x34, 0x44];
+const DIM = [0x66, 0x74, 0x85];
+const ROW_LINE = [0xcc, 0xd0, 0xd6];
+const BADGE_INK = [0xff, 0xff, 0xff];
+const THUMB_FALLBACK = [0xb0, 0xb9, 0xc5];
 
 const FONT_CANDIDATES = [
   "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -309,8 +314,8 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
   } else {
     // Placeholder: a dimmer panel with a play glyph, so a failed thumbnail
     // fetch still reads as "a video".
-    fillRect(rgba, W, H, 0, 0, tw2, th2, [0x1e, 0x2a, 0x38]);
-    drawText(rgba, W, H, "▶", (tw2 - textWidth("▶", 22 * s)) / 2, 40 * s, 22 * s, DIM);
+    fillRect(rgba, W, H, 0, 0, tw2, th2, THUMB_FALLBACK);
+    drawText(rgba, W, H, "▶", (tw2 - textWidth("▶", 22 * s)) / 2, 40 * s, 22 * s, BADGE_INK);
   }
   // Duration badge on the thumbnail, bottom-right (the mockup chip).
   if (input.durationS > 0) {
@@ -318,8 +323,10 @@ async function composeCard(input: CardInput, s: number): Promise<Uint8Array> {
     const tw = Math.ceil(textWidth(label, 10 * s));
     const bx = tw2 - tw - 10 * s;
     fillRect(rgba, W, H, bx, th2 - 16 * s, tw + 8 * s, 13 * s, [0, 0, 0], 0.72);
-    drawText(rgba, W, H, label, bx + 4 * s, th2 - 6 * s, 10 * s, INK);
+    drawText(rgba, W, H, label, bx + 4 * s, th2 - 6 * s, 10 * s, BADGE_INK);
   }
+  // The row's bottom rule, under the text column only (the thumb runs full height).
+  fillRect(rgba, W, H, tw2, H - s, CARD_VISIBLE_W * s - tw2, s, ROW_LINE);
   const tx = tw2 + 10 * s;
   const maxW = CARD_VISIBLE_W * s - tx - 26 * s; // keep clear of the chevron
   const lines = fitLines(input.title, 14 * s, maxW, 2);
@@ -388,8 +395,9 @@ export function downscale2(rgba: Uint8Array, w2: number, h2: number): Uint8Array
   return out;
 }
 
-/** App background behind the rows — corner masking must match it. */
-const PAGE_BG = [0x0b, 0x0f, 0x14];
+/** App background behind the rows — corner masking must match it
+ *  (CLASSIC.background in the device chrome). */
+const PAGE_BG = [0xd9, 0xdd, 0xe3];
 /** Row corner radius; keep in sync with the app's rounded-md (6px). */
 const CORNER_R = 6;
 

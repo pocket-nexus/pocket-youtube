@@ -21,9 +21,14 @@ import {
   type ScriptEvent,
 } from "./harness.ts";
 import { BTN, SCREEN_H, SCREEN_W } from "../vendor/pocketjs/contracts/spec/spec.ts";
-import { layoutRows, OSK_H, OSK_LAYERS, OSK_PAD, OSK_GAP, OSK_ROW_H } from "../vendor/pocketjs/framework/src/osk-layout.ts";
+import { oskMetrics } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { OskScripter } from "../vendor/pocketjs/tests/osk-script.ts";
+import { oskKeyCenter, OskScripter } from "../vendor/pocketjs/tests/osk-script.ts";
+
+/** The classic keyboard on the 480x272 screen: the grid at 20 px rows,
+ *  docked at the bottom — where a touch must land to press a key. */
+const KEYBOARD = oskMetrics("grid", 20);
+const keyAt = (ch: string): [number, number] => oskKeyCenter("grid", "lower", ch, { w: SCREEN_W, h: SCREEN_H }, KEYBOARD);
 import type { HostMsg, ResultItem } from "../app/protocol.ts";
 
 const ITEMS: ResultItem[] = [
@@ -144,9 +149,9 @@ describe("the journey happened", () => {
 
   test("the player HUD shows the host's title and the pause state", () => {
     expect(treeHasText(main.tree, "Vue Vapor on a PSP")).toBe(true);
-    expect(treeHasText(main.tree, "PAUSED")).toBe(true);
+    expect(treeHasText(main.tree, "Paused")).toBe(true);
     expect(treeHasText(main.tree, "0:00 / 12:34")).toBe(true);
-    expect(treeHasText(main.tree, "× BACK")).toBe(true);
+    expect(treeHasText(main.tree, "× back")).toBe(true);
   });
 });
 
@@ -167,9 +172,9 @@ describe("playback failures", () => {
         else host.driver(cmd, deliver);
       },
     });
-    expect(treeHasText(result.tree, "ERROR: Video download failed")).toBe(true);
-    expect(treeHasText(result.tree, "SEARCH")).toBe(true);
-    expect(treeHasText(result.tree, "PAUSED")).toBe(false);
+    expect(treeHasText(result.tree, "Error: Video download failed")).toBe(true);
+    expect(treeHasText(result.tree, "Pocket YouTube")).toBe(true);
+    expect(treeHasText(result.tree, "Paused")).toBe(false);
   }, 30000);
 
   test("a playback-error push leaves the matching player and ignores an old stream", async () => {
@@ -186,17 +191,17 @@ describe("playback failures", () => {
     const frames = Math.ceil(kb.end + 3.5) * 60;
     const { masks, analogs } = scriptToMasks(JOURNEY, 60, frames);
     for (let f = 0; f < frames; f++) { world.frame(masks[f], analogs[f]); world.tick(); }
-    expect(treeHasText(world.getTree(), "PAUSED")).toBe(true);
+    expect(treeHasText(world.getTree(), "Paused")).toBe(true);
     const push = (stream: string) => {
       replies.push(JSON.stringify({ t: "playback-error", stream, message: "Video connection lost" }));
       for (let i = 0; i < 20; i++) { world.frame(0); world.tick(); }
       return world.getTree();
     };
-    expect(treeHasText(push("media/old.pkst"), "PAUSED")).toBe(true);
+    expect(treeHasText(push("media/old.pkst"), "Paused")).toBe(true);
     const tree = push("media/play-1.pkst");
-    expect(treeHasText(tree, "ERROR: Video connection lost")).toBe(true);
-    expect(treeHasText(tree, "SEARCH")).toBe(true);
-    expect(treeHasText(tree, "PAUSED")).toBe(false);
+    expect(treeHasText(tree, "Error: Video connection lost")).toBe(true);
+    expect(treeHasText(tree, "Pocket YouTube")).toBe(true);
+    expect(treeHasText(tree, "Paused")).toBe(false);
   }, 30000);
 });
 
@@ -205,7 +210,7 @@ describe("connect phase", () => {
     // A driver that answers nothing: commands hang forever (worse than an
     // error — the app must not deadlock on it).
     const silent = await run(5, [], { driver: () => {} });
-    expect(treeHasText(silent.tree, "CONNECT USB")).toBe(true);
+    expect(treeHasText(silent.tree, "Connect USB")).toBe(true);
     const hellos = silent.effects.filter((e) => e.t === "command" && e.kind === "yt/hello");
     expect(hellos.length).toBeGreaterThanOrEqual(2); // the 2 s retry pump
   }, 30000);
@@ -214,8 +219,8 @@ describe("connect phase", () => {
     const c = cannedHost();
     const browse = await run(Math.ceil(kb.end + 1), kb.events, { driver: c.driver });
     expect(treeHasText(browse.tree, "1/2")).toBe(true); // focus counter
-    expect(treeHasText(browse.tree, "○ PLAY")).toBe(true);
-    expect(treeHasText(browse.tree, "▼ LOAD MORE — ○")).toBe(true); // sentinel row
+    expect(treeHasText(browse.tree, "○ play")).toBe(true);
+    expect(treeHasText(browse.tree, "Load more · ○")).toBe(true); // sentinel row
   }, 30000);
 
   test("the LOAD MORE row appends a page, then retires at the end", async () => {
@@ -234,7 +239,7 @@ describe("connect phase", () => {
     const r = await run(Math.ceil(kb.end + 4.5), script, { driver: host.driver });
     expect(host.seen.filter((c) => c.kind === "yt/more").length).toBe(2);
     expect(treeHasText(r.tree, "3/3")).toBe(true); //  focus pulled back to the last row
-    expect(treeHasText(r.tree, "▼ LOAD MORE — ○")).toBe(false); // sentinel retired
+    expect(treeHasText(r.tree, "Load more · ○")).toBe(false); // sentinel retired
   }, 30000);
 });
 
@@ -244,8 +249,10 @@ describe("system OSK", () => {
     // the 272px screen — every gated handler went dead and the app read as
     // frozen. The system OSK owns input modality outright; a re-opened
     // keyboard must keep typing + searching.
+    // The reopened keyboard resumes on the key the first session left ('q');
+    // the scripter mirrors that memory through `resume`.
     const s = new OskScripter(1.0).open().type("q").commit();
-    const again = new OskScripter(s.end + 0.5).open().type("a").commit();
+    const again = new OskScripter(s.end + 0.5, { resume: s }).open().type("a").commit();
     const host = cannedHost();
     await run(Math.ceil(again.end + 1), [...s.events, ...again.events], { driver: host.driver });
     expect(searches(host).length).toBe(2);
@@ -262,21 +269,7 @@ describe("system OSK", () => {
   test("touch types on the keyboard and commits with ✓ (input.touch adapter)", async () => {
     // Open with △, then TOUCH 'q' and the ✓ key at their absolute screen
     // rects (panel docked at the bottom of the 272px column).
-    const rows = layoutRows(OSK_LAYERS.lower, SCREEN_W - 2 * OSK_PAD);
-    const panelTop = SCREEN_H - OSK_H;
-    const at = (want: string): [number, number] => {
-      for (const row of rows) {
-        for (const k of row) {
-          if ((k.key.ch ?? k.key.label) === want) {
-            return [
-              OSK_PAD + k.x + Math.floor(k.w / 2),
-              panelTop + OSK_PAD + k.row * (OSK_ROW_H + OSK_GAP) + Math.floor(OSK_ROW_H / 2),
-            ];
-          }
-        }
-      }
-      throw new Error(`no key ${want}`);
-    };
+    const at = keyAt;
     const [qx, qy] = at("q");
     const [okx, oky] = at("✓");
     const touches = new Map<number, number[]>();
@@ -293,21 +286,7 @@ describe("system OSK", () => {
     // ZERO buttons in this journey: the field's hit fact carries the tap into
     // the shared activation pipeline, TextField opens its own OSK, a key and
     // ✓ finish the search — the hardware-day gap, pinned end to end.
-    const rows = layoutRows(OSK_LAYERS.lower, SCREEN_W - 2 * OSK_PAD);
-    const panelTop = SCREEN_H - OSK_H;
-    const at = (want: string): [number, number] => {
-      for (const row of rows) {
-        for (const k of row) {
-          if ((k.key.ch ?? k.key.label) === want) {
-            return [
-              OSK_PAD + k.x + Math.floor(k.w / 2),
-              panelTop + OSK_PAD + k.row * (OSK_ROW_H + OSK_GAP) + Math.floor(OSK_ROW_H / 2),
-            ];
-          }
-        }
-      }
-      throw new Error(`no key ${want}`);
-    };
+    const at = keyAt;
     const [qx, qy] = at("q");
     const [okx, oky] = at("✓");
     const touches = new Map<number, number[]>();
@@ -371,6 +350,6 @@ describe("touch UX", () => {
     expect(kinds.filter((k) => k === "yt/play").length).toBe(0); // never a tap
     // The near-end fetch is feature-gated OFF in this (buttonish) build, so
     // the fling only moves pixels — the browse chrome is still up.
-    expect(treeHasText(r.tree, "SEARCH")).toBe(true);
+    expect(treeHasText(r.tree, "Pocket YouTube")).toBe(true);
   }, 30000);
 });

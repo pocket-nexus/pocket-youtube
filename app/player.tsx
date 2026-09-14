@@ -22,13 +22,15 @@ import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
 import * as hot from "@pocketjs/framework/hot";
+import { glyph } from "@pocketjs/framework/modality";
 import { hasFeature } from "@pocketjs/framework/platform";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
 
-const INK = "#e8f0f2";
-const DIM = "#8fa3ad";
-const RED = "#ff4757";
+const INK = "#f4f7fa";
+const DIM = "#aeb8c4";
+const BLUE = "#4a8fe0";
+const ALERT = "#ff8a80";
 
 function fmt(s: number): string {
   const m = Math.floor(s / 60) % 60;
@@ -169,8 +171,8 @@ export default function Player(props: { store: YoutubeStore }) {
         <View class="absolute inset-0 items-center justify-center flex-col gap-2">
           <Text class="text-sm tracking-wide" style={{ textColor: DIM }}>
             {props.store.transport() === "http"
-              ? "STREAMING TO THE HOST — VIDEO PLANE IS PSP-ONLY"
-              : "VIDEO PLANE UNAVAILABLE"}
+              ? "Streaming to the host. The video plane is device-only."
+              : "Video plane unavailable"}
           </Text>
         </View>
       </Show>
@@ -201,30 +203,30 @@ export default function Player(props: { store: YoutubeStore }) {
         </View>
         <View class="flex-col gap-1 px-3 py-2 bg-[#000000aa]">
           <Show when={props.store.player()?.ended}>
-            <Text class="text-xs font-bold tracking-wide" style={{ textColor: RED }}>
-              ENDED — ◁ REWIND OR × BACK
+            <Text class="text-xs font-bold" style={{ textColor: ALERT }}>
+              {`Ended · ◁ rewind · ${glyph("cross")} back`}
             </Text>
           </Show>
           <Show when={props.store.player() && !props.store.player()!.playing && !props.store.player()!.ended}>
-            <Text class="text-xs font-bold tracking-wide" style={{ textColor: RED }}>
-              PAUSED
+            <Text class="text-xs font-bold" style={{ textColor: INK }}>
+              Paused
             </Text>
           </Show>
-          <View class="w-full h-[3] bg-[#2a3542] rounded-sm">
+          <View class="w-full h-[4] bg-[#ffffff55] rounded-sm">
             <View
               nodeRef={(n) => (bar = n)}
               class="w-full h-full rounded-sm"
-              style={{ bgColor: RED, scaleX: 0, originX: -0.5 }}
+              style={{ bgColor: BLUE, scaleX: 0, originX: -0.5 }}
             />
           </View>
           <View class="flex-row justify-between items-center">
             <Text nodeRef={(n) => (clock = n)} class="text-xs" style={{ textColor: INK, width: 110, lineHeight: 13 }}>
               0:00 / 0:00
             </Text>
-            <Text class="text-xs tracking-wide" style={{ textColor: DIM, lineHeight: 13 }}>
+            <Text class="text-xs" style={{ textColor: DIM, lineHeight: 13 }}>
               {hasFeature("input.touch")
-                ? "TAP HUD · 2×TAP SEEK · DRAG BAR · ▼ BACK"
-                : "○ PAUSE · ◁▷ ±10s · × BACK"}
+                ? "Tap HUD · 2×tap seek · drag bar · ▼ back"
+                : `${glyph("circle")} pause · ◁▷ ±10 s · ${glyph("cross")} back`}
             </Text>
           </View>
         </View>

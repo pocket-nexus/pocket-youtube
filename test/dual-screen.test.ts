@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
 import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { searchKeys, type KeyboardLayer } from "../app/search-keyboard-layout.ts";
+import { oskKeyCenter } from "../vendor/pocketjs/tests/osk-script.ts";
+import { oskMetrics, type OskLayerName } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
@@ -156,23 +157,25 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   }
   expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
   tap(24, 54); await capture("keyboard");
-  const key = (label: string, layer: KeyboardLayer = "lower") => {
-    const key = searchKeys(layer).find(key => key.ch === label || key.action === label);
-    if (!key) throw new Error(`Missing key ${label}`);
-    tap(key.x + key.w / 2, key.y + 15);
-  };
+  // The framework's system keyboard on the auxiliary surface: the staggered
+  // layout at 30 px rows under the classic theme's 14 px legend, docked at
+  // the bottom of the 320x240 screen.
+  const AUX = { w: 320, h: 240 }, KEYBOARD = oskMetrics("staggered", 30, 14);
+  const keyAt = (label: string, layer: OskLayerName = "lower") => oskKeyCenter("staggered", layer, label, AUX, KEYBOARD);
+  const key = (label: string, layer?: OskLayerName) => { const [x, y] = keyAt(label, layer); tap(x, y); };
   const cap = () => {
-    const pixels = wasm.renderAuxiliary(), output: number[] = [];
-    for (let y = 100; y < 130; y++) for (let x = 2; x < 30; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
+    // The 'q' cap: the pressed look must clear on release.
+    const [qx, qy] = keyAt("q"), pixels = wasm.renderAuxiliary(), output: number[] = [];
+    for (let y = qy - 14; y < qy + 15; y++) for (let x = qx - 12; x < qx + 13; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
     return output;
   };
   const neutralCap = cap(); key("q"); expect(cap()).toEqual(neutralCap);
   await capture("keyboard-typed");
-  key("w"); const deletion = searchKeys("lower").find(k => k.action === "delete")!;
-  step(35, deletion.x + 19, deletion.y + 15); step(); key("q"); key("w"); key(" ");
-  const space = searchKeys("lower").find(k => k.ch === " ")!;
-  step(16, space.x + 80, space.y + 15); step(1, space.x + 70, space.y + 15); step();
-  key("delete"); key("search"); step(45);
+  key("w"); const [deleteX, deleteY] = keyAt("⌫");
+  step(35, deleteX, deleteY); step(); key("q"); key("w"); key(" ");
+  const [spaceX, spaceY] = keyAt(" ");
+  step(16, spaceX + 30, spaceY); step(1, spaceX + 20, spaceY); step();
+  key("⌫"); key("✓"); step(45);
   expect(searches[0]?.query).toBe("q");
   expect(commands.some(c => c.t === "search" || c.t === "more")).toBe(false);
   expect(searches.some(input => input.offset === 5)).toBe(true);

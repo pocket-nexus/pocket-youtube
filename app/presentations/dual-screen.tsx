@@ -1,24 +1,37 @@
+// app/presentations/dual-screen.tsx — Pocket YouTube across two screens
+// (New 3DS): video on the top screen, controls, browsing, downloads and
+// captions on the touch bottom screen. Both displays share one playback
+// lifetime; browsing never unmounts the video.
+//
+// The search keyboard is the framework's system keyboard on the auxiliary
+// surface: the surface reports contacts, so the panel picks the staggered
+// phone layout with the down-edge press model, and the d-pad focus ring
+// stays hidden until the d-pad is used. The classic theme is the same skin
+// the single-screen presentation wears on a PSP.
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
-import { AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
+import { AuxiliaryPortal, AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
+import { CLASSIC } from "@pocketjs/framework/classic";
 import { auxiliaryViewport } from "@pocketjs/framework/display";
 import { getOps, hostViewport } from "@pocketjs/framework/host";
 import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { createGesture } from "@pocketjs/framework/gesture";
 import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
+import { glyph } from "@pocketjs/framework/modality";
 import { offload, uploadCoverage } from "@pocketjs/framework/offload";
-import { createOsk } from "@pocketjs/framework/osk";
+import { createOsk, Osk } from "@pocketjs/framework/osk";
 import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
-import type { YoutubeStore } from "./store.ts";
-import type { ResultItem } from "./protocol.ts";
+import { createYoutubeStore, type YoutubeStore } from "../store.ts";
+import type { ResultItem } from "../protocol.ts";
 import { createResourceView } from "@pocketjs/framework/resource-view";
 import { ResourceImage } from "@pocketjs/framework/resource";
-import { SearchKeyboard } from "./search-keyboard.tsx";
-import { rendition, type ArtworkCollection } from "./artwork.ts";
-import { createDownloads, type Downloads } from "./downloads.ts";
+import { pumpDriver } from "../driver.ts";
+import { createYoutubeResources, rendition, type ArtworkCollection } from "../artwork.ts";
+import { createCompanionSearch } from "../search.ts";
+import { createDownloads, type Downloads } from "../downloads.ts";
 
-const BG = "#d9dde3", INK = "#283444", DIM = "#667485", BLUE = "#2676cb";
+const BG = CLASSIC.background, INK = CLASSIC.ink, DIM = CLASSIC.dim, BLUE = CLASSIC.blue;
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 function Skin(props: { src: string; w: number; h: number }) {
   return <Image src={props.src} class="absolute" style={{ insetL: 0, insetT: 0, width: props.w, height: props.h }} />;
@@ -41,8 +54,20 @@ function Navigation(props: { title: string; children?: JSX.Element }) {
     {props.children}
   </View>;
 }
+/** The presentation root: companion-backed search and artwork, one store,
+ *  the per-frame driver pump. */
+export default function DualScreenApp() {
+  const resources = createYoutubeResources();
+  const store = createYoutubeStore(createCompanionSearch(resources.runtime));
+  onFrame(() => {
+    pumpDriver();
+    store.connectTick();
+  });
+  return <DualScreen store={store} artwork={resources.artwork} />;
+}
+
 /** Both displays share a playback lifetime. Browsing never unmounts video. */
-export default function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
+export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
   const artwork = props.artwork;
   const native = mediaPlayer(), top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
   const playingItem = createMemo<Pick<ResultItem, "videoId" | "title" | "channel"> | undefined>(previous => {
@@ -80,7 +105,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     setCaptionVisible(false);
     if (captionHandle >= 0) getOps().freeTexture?.(captionHandle);
     captionHandle = -1;
-    if (!native.open(player.source)) setError("PLAYER BUSY — TAP RETRY");
+    if (!native.open(player.source)) setError("Player busy. Tap Retry.");
     native.volume(volume());
     native.pause(!player.playing);
     if (plane) getOps().setImage(plane.id, native.texture());
@@ -134,7 +159,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
       </Show>
       <Show when={props.store.player() && !pictureVisible()}>
         <View class="absolute inset-0 items-center justify-center">
-          <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "PLAYBACK UNAVAILABLE" : "BUFFERING VIDEO…"}</Text>
+          <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "Playback unavailable" : "Buffering video…"}</Text>
         </View>
       </Show>
     </View>
@@ -157,7 +182,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
         </Focusable>
         <VolumeTile value={volume} change={changeVolume} />
         <Tile x={244} y={196} w={68} h={26} label="Stop" onPress={stop} />
-        <View class="absolute" style={{ insetL: 77, insetT: 227 }}><Text class="text-xs" style={{ textColor: DIM }}>L / R skip     B browse</Text></View>
+        <View class="absolute" style={{ insetL: 77, insetT: 227 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${glyph("ltrigger")} / ${glyph("rtrigger")} skip     ${glyph("cross")} browse`}</Text></View>
         <Show when={error()}>
           <View class="absolute inset-0 flex-col items-center justify-center gap-3" style={{ bgColor: BG }}>
             <Text class="text-sm" style={{ textColor: INK, width: 288 }}>{error()}</Text>
@@ -244,11 +269,13 @@ function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; downl
     </View>
     <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
       <Skin src="classic-footer.png" w={512} h={32} />
-      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? "Tap to play · Hold to save · X search" : "Touch or press X to search")}</Text>}>
+      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? `Tap to play · Hold to save · ${glyph("triangle")} search` : `Touch or press ${glyph("triangle")} to search`)}</Text>}>
         <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
       </Show>
     </View>
-    <Show when={keyboard.isOpen()}><SearchKeyboard osk={keyboard} /></Show>
+    <AuxiliaryPortal>{() => <View style={{ posType: 1, insetB: 0, insetL: 0, width: 320, hitPass: 1 }}>
+      <Osk osk={keyboard} surface="auxiliary" theme="classic" hint={`${glyph("cross")} cancel · ${glyph("start")} search`} />
+    </View>}</AuxiliaryPortal>
   </View>;
 }
 function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
@@ -270,7 +297,7 @@ function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
     <View class="absolute" style={{ insetL: 66, insetT: 39, width: 218 }}><Text class="text-xs" style={{ textColor: DIM }}>{copy()[1]}</Text></View>
     <View class="absolute" style={{ insetL: 14, insetT: 82 }}><Text class="text-xs font-bold" style={{ textColor: BLUE }}>{state() === "ready" ? "Tap to search" : "Edit search"}</Text></View>
     <View class="absolute rounded-sm items-center justify-center" style={{ insetL: 236, insetT: 78, width: 22, height: 20, bgColor: "#f8f9fb", borderWidth: 1, borderColor: "#b1bccb" }}>
-      <Text class="text-xs font-bold" style={{ textColor: DIM }}>X</Text>
+      <Text class="text-xs font-bold" style={{ textColor: DIM }}>{glyph("triangle")}</Text>
     </View>
     <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
   </Focusable>;
@@ -417,7 +444,7 @@ function CaptionPanel(props: { store: YoutubeStore; downloads: Downloads; enable
         <Tile x={84} y={188} w={152} h={26} label={loading() || switching() ? "Retrying…" : "Retry"} disabled={loading() || switching() || !connected()} onPress={() => loadError() ? load(requestedOffset) : retry()} />
       </Show>
     </Show>
-    <View class="absolute" style={{ insetL: 12, insetT: 223 }}><Text class="text-xs" style={{ textColor: DIM }}>{local() ? player().hasCaptions ? "Captions stay on this 3DS with the video." : "Video remains available offline." : saved() ? "This language is saved as WebVTT on SD." : "B returns to playback · Saves stay on SD"}</Text></View>
+    <View class="absolute" style={{ insetL: 12, insetT: 223 }}><Text class="text-xs" style={{ textColor: DIM }}>{local() ? player().hasCaptions ? "Captions stay on this 3DS with the video." : "Video remains available offline." : saved() ? "This language is saved as WebVTT on SD." : `${glyph("cross")} returns to playback · Saves stay on SD`}</Text></View>
   </View>;
 }
 function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {

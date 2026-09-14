@@ -221,32 +221,32 @@ describe("cards", () => {
     expect(card.length).toBe(CARD_W * CARD_H * 4);
     // Thumb pixel landed.
     expect(card[(10 * CARD_W + 10) * 4 + 2]).toBe(160);
-    // Some ink brighter than the background exists in the text region.
-    let bright = 0;
+    // Dark ink on the light row exists in the text region.
+    let ink = 0;
     for (let y = 0; y < CARD_H; y++) {
       for (let x = 124; x < CARD_VISIBLE_W; x++) {
-        if (card[(y * CARD_W + x) * 4] > 0x80) bright++;
+        if (card[(y * CARD_W + x) * 4] < 0x80) ink++;
       }
     }
-    expect(bright).toBeGreaterThan(50);
+    expect(ink).toBeGreaterThan(50);
     // The duration badge darkened the thumb's bottom-right corner.
     expect(card[(56 * CARD_W + 110) * 4 + 2]).toBeLessThan(160);
     // The chevron leaves ink near the right edge of the VISIBLE row.
     let chevron = 0;
     for (let y = 24; y < 44; y++) {
       for (let x = CARD_VISIBLE_W - 20; x < CARD_VISIBLE_W; x++) {
-        if (card[(y * CARD_W + x) * 4] > 0x40) chevron++;
+        if (card[(y * CARD_W + x) * 4] < 0xc0) chevron++;
       }
     }
     expect(chevron).toBeGreaterThan(4);
-    // The pow2 tail (clipped on device) stays flat background.
-    for (let y = 0; y < CARD_H; y += 7) {
-      expect(card[(y * CARD_W + CARD_VISIBLE_W + 20) * 4]).toBe(0x14);
+    // The pow2 tail (clipped on device) stays flat row paper.
+    for (let y = 0; y < CARD_H - 1; y += 7) {
+      expect(card[(y * CARD_W + CARD_VISIBLE_W + 20) * 4]).toBe(0xf7);
     }
     // Corners are rounded in pixels (device scissors are rectangular): the
-    // very corner shows the page background, the straight edges keep content.
+    // very corner shows the classic linen page, the straight edges keep content.
     for (const [x, y] of [[0, 0], [CARD_VISIBLE_W - 1, 0], [0, CARD_H - 1], [CARD_VISIBLE_W - 1, CARD_H - 1]]) {
-      expect(card[(y * CARD_W + x) * 4]).toBe(0x0b);
+      expect(card[(y * CARD_W + x) * 4]).toBe(0xd9);
     }
     expect(card[(30 * CARD_W + 0) * 4 + 2]).toBe(160); // mid-left edge: thumb intact
   });
@@ -270,7 +270,7 @@ describe("cards", () => {
     let seamInk = 0;
     for (let y = 20; y < 60; y++) {
       for (let x = 0; x < 40; x++) {
-        if (right[(y * CARD_HD_HALF_W + x) * 4] > 0x30) seamInk++;
+        if (right[(y * CARD_HD_HALF_W + x) * 4] < 0x80) seamInk++;
       }
     }
     expect(seamInk).toBeGreaterThan(0);

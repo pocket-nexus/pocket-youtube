@@ -5,10 +5,15 @@ YouTube on PSP, PS Vita and New Nintendo 3DS, with a Mac companion.
 ## New Nintendo 3DS
 
 Watch on the **400×240 upper display** and use the **320×240 touch display**
-for search, browsing and playback controls. The iOS-inspired keyboard clears
-its pressed state on release; hold backspace to delete or hold space to move
-the cursor. Search results load ahead of the scroll position, with cached
-titles and thumbnails.
+for search, browsing and playback controls. The PocketJS system keyboard runs
+in its contact layout on the touch display: keys type on the down edge, hold
+backspace to delete, hold space to move the cursor. Search results load ahead
+of the scroll position, with cached titles and thumbnails.
+
+One `pocket.json` serves every device. Its `dual-screen` presentation is
+addressed to the two-screen modality; the PSP and Vita compile the
+single-screen baseline with the same classic chrome and the same keyboard in
+its d-pad grid layout.
 
 **Hold a video row to save it on the 3DS SD card.** The Saved screen shows
 conversion progress, SD transfer progress and completed downloads. Saved
@@ -60,8 +65,9 @@ The PSP's 802.11b radio cannot reach the modern web, so the app splits at the
 network boundary: a Mac companion process owns DNS, TLS, yt-dlp and H.264,
 and the handheld — running [PocketJS](https://github.com/pocket-stack/pocketjs) —
 owns presentation: a 60 Hz Solid UI, a 512×128 CLUT8 video plane at 12 fps,
-and a 44.1 kHz audio thread. Search with the system on-screen keyboard,
-browse host-rendered rows (CJK titles included), play, pause, seek.
+and a 44.1 kHz audio thread. Search with the system on-screen keyboard (the
+d-pad grid, which reopens on the key you left), browse host-rendered rows (CJK
+titles included) under the classic light chrome, play, pause, seek.
 
 The full engineering story — the `.pkst` ring container you can `ls`, the
 per-frame palette quantization, the GPU race that only real silicon could
@@ -169,8 +175,9 @@ PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `3b39f4d3`**, including native 3DS media, an SD download worker, local seeking,
-timed captions and shared touch-keyboard support. **This build requires a new
+The framework is pinned to **PocketJS `6da4809e`**, including native 3DS media, an SD download worker, local seeking,
+timed captions, device modality with manifest presentations, and the
+modality-aware system keyboard. **This build requires a new
 3DS launcher with host ABI 11.** The PSP crate
 and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
 the PSP build passes `-O2` for the C interpreter, matching the upstream
