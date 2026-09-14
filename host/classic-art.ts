@@ -5,7 +5,8 @@ import { thumbnailUrl, type SearchItem } from "./yt.ts";
 import { proxyUrl } from "./proxy.ts";
 
 /** Title and channel as 2-bit coverage, `width` px wide (a multiple of 4,
- *  at most 8192 pixels in all): 192 for a 320-wide screen, 224 for 480. */
+ *  at most 8192 pixels in all): 192 for a 320-wide screen, 204 for 480 (the
+ *  widest whose reply fits the 2,500-character offload payload budget). */
 export async function titleArt(item: Pick<SearchItem, "title" | "channel">, width = 192) {
   await cardFont();
   if (!Number.isInteger(width) || width < 64 || width > 512 || width % 4 || width * 36 > 8192) throw new Error("Invalid title width");

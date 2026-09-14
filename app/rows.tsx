@@ -1,7 +1,9 @@
 // app/rows.tsx — the result row both presentations render.
 //
 // One component, two widths: the 3DS bottom screen (320) takes 192 px of
-// title coverage, a 480 px screen takes 224. Title and channel are 2-bit
+// title coverage with the meta line under it; a 480 px screen takes 204 px
+// (the widest reply the offload payload budget carries, see artwork.ts)
+// with duration and views in a column on the right. Title and channel are 2-bit
 // coverage the companion rasterizes (CJK included) and the host expands
 // natively (`offload.uploadCoverage` on the 3DS and the PSP); the thumbnail
 // is a sixteen-colour indexed image the host uploads as one CLUT texture.
@@ -14,7 +16,7 @@ import { CLASSIC, ClassicSkeleton } from "@pocketjs/framework/classic";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import { ResourceImage } from "@pocketjs/framework/resource";
 import { createResourceView } from "@pocketjs/framework/resource-view";
-import { rendition, TEXT_WIDTH_320, type ArtworkCollection } from "./artwork.ts";
+import { rendition, TEXT_WIDTH_320, TEXT_WIDTH_480, type ArtworkCollection } from "./artwork.ts";
 import type { ResultItem } from "./protocol.ts";
 
 export const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
@@ -34,21 +36,35 @@ export interface ArtworkRowProps {
 /** One result row: thumbnail, title coverage, duration and views. The
  *  presentation paints the selection wash above it (ClassicList). */
 export function ArtworkRow(props: ArtworkRowProps) {
-  const textWidth = () => props.textWidth ?? (props.width >= 480 ? 224 : TEXT_WIDTH_320);
+  // A wide row (480) centres thumbnail and title and keeps its meta in a
+  // right column; a narrow row (320) stacks the meta line under the title.
+  const wide = () => !props.compact && props.width >= 480;
+  const textWidth = () => props.textWidth ?? (props.width >= 480 ? TEXT_WIDTH_480 : TEXT_WIDTH_320);
   const text = () => rendition(props.item, "text", textWidth()), thumbnail = () => rendition(props.item, "thumbnail");
   const view = createResourceView(props.artwork, { demand: () => [
     { input: text(), priority: 0, pin: true }, { input: thumbnail(), priority: 10, pin: true },
   ] });
   const height = () => (props.compact ? 48 : 64);
+  const thumbTop = () => (props.compact ? 4 : wide() ? 12 : 8);
+  const textTop = () => (props.compact ? 4 : wide() ? 14 : 7);
+  const metaLeft = () => 92 + textWidth() + 8;
   return (
     <View class="relative bg-white" style={{ width: props.width, height: height(), overflow: 1 }}>
-      <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: props.compact ? 4 : 8, width: 72, height: 40, overflow: 1 }}
+      <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: thumbTop(), width: 72, height: 40, overflow: 1 }}
         fallback={() => <View class="items-center justify-center" style={{ width: 72, height: 40, bgColor: "#b0b9c5" }}><Image src="classic-play.png" style={{ width: 24, height: 24, opacity: .7 }} /></View>} />
-      <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: props.compact ? 4 : 7, width: textWidth(), height: 36, overflow: 1 }}
+      <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: textTop(), width: textWidth(), height: 36, overflow: 1 }}
         fallback={() => <View class="absolute" style={{ insetT: 3 }}><ClassicSkeleton widths={[Math.round(textWidth() * .9), Math.round(textWidth() * .7), 80]} /></View>} />
-      <Show when={!props.compact}>
+      <Show when={wide()}>
+        <View class="absolute flex-col items-end justify-center gap-[2]" style={{ insetL: metaLeft(), insetT: 0, width: props.width - metaLeft() - 12, height: 64 }}>
+          <Text class="text-xs" style={{ textColor: CLASSIC.dim }}>{time(props.item.durationS ?? 0)}</Text>
+          <Text class="text-xs" style={{ textColor: CLASSIC.dim }}>{views(props.item.views ?? 0)}</Text>
+        </View>
+      </Show>
+      <Show when={!props.compact && !wide()}>
         <View class="absolute" style={{ insetL: 10, insetT: 49 }}><Text class="text-xs" style={{ textColor: CLASSIC.dim }}>{time(props.item.durationS ?? 0)}</Text></View>
         <View class="absolute" style={{ insetL: 92, insetT: 47 }}><Text class="text-xs" style={{ textColor: CLASSIC.dim }}>{views(props.item.views ?? 0)}</Text></View>
+      </Show>
+      <Show when={!props.compact}>
         <View class="absolute" style={{ insetL: 0, insetB: 0, width: props.width, height: 1, bgColor: CLASSIC.rowLine }} />
       </Show>
     </View>

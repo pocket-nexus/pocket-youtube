@@ -207,7 +207,15 @@ describe("cards", () => {
     );
     expect(lines.length).toBe(2);
     expect(lines[1].endsWith("…")).toBe(true);
+    // The first line ends on a whole word; the second starts with the next one.
+    expect(lines[0].endsWith(" ")).toBe(false);
+    expect("The quick brown fox jumps over the lazy dog".startsWith(lines[0] + " " + lines[1].slice(0, 3))).toBe(true);
     expect(fitLines("short", 13, 132, 2)).toEqual(["short"]);
+    // Text without spaces still breaks by character.
+    const cjk = fitLines("東京都渋谷区神南一丁目のライブ配信アーカイブ全編", 12, 96, 2);
+    expect(cjk.length).toBe(2);
+    expect(cjk[0].length).toBeGreaterThan(4);
+    expect(cjk[1].endsWith("…")).toBe(true);
   });
 
   test("renderCard paints thumbnail area and text ink", async () => {

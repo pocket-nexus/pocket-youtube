@@ -5,8 +5,8 @@
 // runtime schedules the loads inside a per-frame budget, keeps a bounded
 // texture cache, and retries pending replies. Three renditions exist:
 //
-//   text       192×36 coverage of the title and channel (3DS bottom screen;
-//              the host expands coverage natively)
+//   text       192×36 (320 px screen) or 204×36 (480 px screen) coverage of
+//              the title and channel; the host expands coverage natively
 //   thumbnail  72×40 sixteen-colour indexed image (3DS)
 //   card       the 512×64 IMG side file with thumbnail, title, channel,
 //              duration and views drawn on the Mac (PSP over USB, Vita);
@@ -19,7 +19,7 @@
 
 import { after } from "@pocketjs/framework/clock";
 import { getOps } from "@pocketjs/framework/host";
-import { offload, uploadCoverage, uploadIndexedImage } from "@pocketjs/framework/offload";
+import { OFFLOAD, offload, uploadCoverage, uploadIndexedImage } from "@pocketjs/framework/offload";
 import type { TextureResource } from "@pocketjs/framework/resource";
 import { offloadResource } from "@pocketjs/framework/resource-offload";
 import { createResourceRuntime, type ResourceCollection } from "@pocketjs/framework/resource-view";
@@ -27,8 +27,16 @@ import type { ResultItem } from "./protocol.ts";
 
 export type ArtworkInput = { videoId: string; kind: "text" | "thumbnail"; revision: string; width: number };
 export type ArtworkCollection = ResourceCollection<ArtworkInput, TextureResource>;
-/** The 3DS bottom screen takes 192 px of title; a 480 px screen takes 224. */
-export const TEXT_WIDTH_320 = 192, TEXT_WIDTH_480 = 224;
+/** Title coverage is TITLE_ROWS rows of 2-bit pixels: 9 bytes, 12 base64
+ *  characters per column. The JSON envelope around the coverage string
+ *  ({"width":…,"height":36,"coverage":""}) is under TITLE_ENVELOPE_CHARS. */
+export const TITLE_ROWS = 36;
+const TITLE_ENVELOPE_CHARS = 48, TITLE_CHARS_PER_COLUMN = TITLE_ROWS * 2 / 8 * 4 / 3;
+/** A 320 px screen (the 3DS bottom screen) takes 192 px of title. A 480 px
+ *  screen takes the widest multiple of four whose reply fits the offload
+ *  payload budget: 204 columns at 2,500 characters. */
+export const TEXT_WIDTH_320 = 192;
+export const TEXT_WIDTH_480 = Math.floor((OFFLOAD.payloadChars - TITLE_ENVELOPE_CHARS) / TITLE_CHARS_PER_COLUMN / 4) * 4;
 export const rendition = (item: Pick<ResultItem, "videoId" | "title" | "channel">, kind: ArtworkInput["kind"], textWidth = TEXT_WIDTH_320): ArtworkInput =>
   ({ videoId: item.videoId, kind, width: kind === "text" ? textWidth : 72, revision: kind === "text" ? JSON.stringify([item.title, item.channel, textWidth]) : "72x40-v1" });
 
@@ -73,10 +81,10 @@ export function createYoutubeResources() {
         if (data.width !== 72 || data.height !== 40) throw new Error("Invalid thumbnail dimensions");
         return uploadIndexedImage(data);
       }
-      const expected = Math.ceil(Math.ceil(input.width * 36 / 4) / 3) * 4;
-      if (data.width !== input.width || data.height !== 36 || typeof data.coverage !== "string" || data.coverage.length !== expected)
+      const expected = Math.ceil(Math.ceil(input.width * TITLE_ROWS / 4) / 3) * 4;
+      if (data.width !== input.width || data.height !== TITLE_ROWS || typeof data.coverage !== "string" || data.coverage.length !== expected)
         throw new Error("Invalid title dimensions");
-      const handle = uploadCoverage(data.coverage, input.width, 36, 0xff332d28);
+      const handle = uploadCoverage(data.coverage, input.width, TITLE_ROWS, 0xff332d28);
       if (handle === undefined || handle < 0) throw new Error("Title upload unavailable");
       let w = 8; while (w < input.width) w *= 2;
       return { handle, width: w, height: 64 };

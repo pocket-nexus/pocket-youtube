@@ -228,8 +228,16 @@ export function fitLines(text: string, size: number, maxWidth: number, maxLines:
       lines.push(line + "…");
       return lines;
     }
+    // Break at the last space when a word is in progress and the carried
+    // word fits a line of its own; text without spaces (CJK) breaks by character.
+    let carry = chars[i] === " " ? "" : chars[i];
+    const cut = carry ? line.lastIndexOf(" ") : -1;
+    if (cut > 0 && textWidth(line.slice(cut + 1) + carry, size) <= maxWidth) {
+      carry = line.slice(cut + 1) + carry;
+      line = line.slice(0, cut);
+    }
     lines.push(line);
-    line = chars[i] === " " ? "" : chars[i];
+    line = carry;
   }
   if (line) lines.push(line);
   return lines;

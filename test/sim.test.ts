@@ -18,6 +18,8 @@ import { oskKeyCenter, OskScripter } from "../vendor/pocketjs/tests/osk-script.t
 import type { HostOps } from "../vendor/pocketjs/framework/src/host.ts";
 import { createCanvas } from "@napi-rs/canvas";
 import { thumbnailArt, titleArt } from "../host/classic-art.ts";
+import { OFFLOAD } from "../vendor/pocketjs/contracts/spec/offload.ts";
+import { TEXT_WIDTH_480 } from "../app/artwork.ts";
 
 /** The classic keyboard on the 480x272 screen: the grid at 20 px rows,
  *  docked at the bottom — where a touch must land to press a key. */
@@ -37,9 +39,9 @@ const ITEMS = Array.from({ length: 12 }, (_, i) => ({
   card: `thumbs/video${String(i).padStart(6, "0")}.img`,
 }));
 
-/** The renditions a 480-wide row asks for: 224 px title coverage and a
- *  72×40 sixteen-colour thumbnail, rendered by the real companion code. */
-const TEXTS = new Map(await Promise.all(ITEMS.map(async (item) => [item.videoId, await titleArt(item, 224)] as const)));
+/** The renditions a 480-wide row asks for: TEXT_WIDTH_480 px title coverage
+ *  and a 72×40 sixteen-colour thumbnail, rendered by the real companion code. */
+const TEXTS = new Map(await Promise.all(ITEMS.map(async (item) => [item.videoId, await titleArt(item, TEXT_WIDTH_480)] as const)));
 const THUMBS = new Map(ITEMS.map((item, index) => {
   const canvas = createCanvas(72, 40), ctx = canvas.getContext("2d");
   ctx.fillStyle = ["#a8cfce", "#162940", "#9086ad", "#daaa7f", "#d3bca2"][index % 5]; ctx.fillRect(0, 0, 72, 40);
@@ -92,7 +94,11 @@ function companion(options: { session?: number; playError?: string } = {}): Comp
         else if (data.kind === "thumbnail") result = THUMBS.get(data.videoId);
         else throw new Error(`unexpected rendition ${data.kind}`);
       }
-      replies.push(JSON.stringify({ id: request.id, payload: JSON.stringify(result) }));
+      // The real provider refuses a reply over the payload budget; so does
+      // this one, so an oversized rendition fails here and not on the device.
+      const payload = JSON.stringify(result);
+      if (payload.length > OFFLOAD.payloadChars) throw new Error(`Result budget exceeded: ${request.method} ${payload.length} chars`);
+      replies.push(JSON.stringify({ id: request.id, payload }));
       return true;
     },
     // The wasm host has no native coverage upload: expand to RGBA here, as
