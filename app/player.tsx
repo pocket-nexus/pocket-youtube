@@ -1,10 +1,7 @@
 // demos/youtube/player.tsx — the playback screen.
 //
-// One full-screen Image node bound to the native video plane (spec ops
-// 34..37): videoOpen() on entry, videoTick() every frame (the bounded USB IO
-// pump — it returns the presented source frame index, which IS the play
-// clock), videoClose() on the way out. The HUD (title, progress, hints)
-// rides hot.prop/hot.text — per-frame paint-only writes, no reactive churn.
+// The framework media provider owns the decoder and the playback clock.
+// This screen places its texture and paints title, progress and input hints.
 //
 // Input: ○ pause/resume · ◁/▷ seek ±10 s · × back to results. Touch (where
 // the host delivers contacts): tap toggles the HUD, double-tap the left or
@@ -13,7 +10,7 @@
 // release), and a downward fling leaves the player. On PSP touches() is
 // always empty and every gesture path is inert.
 
-import { createEffect, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createSignal, Show, untrack } from "solid-js";
 import { createMediaScrubber } from "@pocketjs/framework/media";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import { virtualFrame } from "@pocketjs/framework/clock";
@@ -22,13 +19,15 @@ import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
 import { BTN } from "@pocketjs/framework/input";
 import { getOps } from "@pocketjs/framework/host";
 import * as hot from "@pocketjs/framework/hot";
+import { useActions } from "@pocketjs/framework/actions";
 import { hasFeature } from "@pocketjs/framework/platform";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
 import type { YoutubeStore } from "./store.ts";
 
-const INK = "#e8f0f2";
-const DIM = "#8fa3ad";
-const RED = "#ff4757";
+const INK = "#f4f7fa";
+const DIM = "#aeb8c4";
+const BLUE = "#4a8fe0";
+const ALERT = "#ff8a80";
 
 function fmt(s: number): string {
   const m = Math.floor(s / 60) % 60;
@@ -42,7 +41,7 @@ function fmt(s: number): string {
 const HUD_FRAMES = 180;
 
 export default function Player(props: { store: YoutubeStore }) {
-  const ops = getOps();
+  const ops = getOps(), playback = props.store.playback;
   let plane: NodeMirror | undefined;
   let hud: NodeMirror | undefined;
   let bar: NodeMirror | undefined;
@@ -51,30 +50,27 @@ export default function Player(props: { store: YoutubeStore }) {
   let hudLeft = HUD_FRAMES;
   const [planeOk, setPlaneOk] = createSignal(false);
 
-  // A fresh "playing" reply = a fresh .pkst file: (re)open the stream and
-  // rebind the plane texture. playSerial() is the tracked trigger.
+  // A fresh playback reply rebinds the provider texture.
   createEffect(() => {
     props.store.playSerial();
     const p = untrack(props.store.player);
     if (!p) return;
-    setPlaneOk(ops.videoOpen?.(p.stream) ?? false);
+    setPlaneOk(playback.status().phase !== "error");
     currentS = 0;
     hudLeft = HUD_FRAMES;
     if (planeOk() && plane) {
-      const tex = ops.videoTexture?.() ?? -1;
+      const tex = playback.texture();
       if (tex >= 0) ops.setImage(plane.id, tex);
     }
   });
 
-  onCleanup(() => {
-    ops.videoClose?.();
-  });
 
   onFrame((buttons) => {
     const p = props.store.player();
     if (planeOk()) {
-      const idx = ops.videoTick?.() ?? -1;
-      if (idx >= 0 && p) currentS = idx / p.fps;
+      const status = playback.status();
+      currentS = status.positionMs / 1000;
+      if (p) props.store.reportPlayback(currentS, status.phase === "ended");
     }
     hudLeft = buttons !== 0 ? HUD_FRAMES : Math.max(0, hudLeft - 1);
     const paused = p ? !p.playing || p.ended : false;
@@ -85,11 +81,18 @@ export default function Player(props: { store: YoutubeStore }) {
     }
   });
 
-  onButtonPress(BTN.CIRCLE, () => props.store.togglePause());
-  onButtonPress(BTN.START, () => props.store.togglePause());
+  // The screen's intents (docs/HIG.md §2): pause on confirm and on the media
+  // key, ±10 s on the shoulders, back leaves the player. The d-pad's ◁▷ seek
+  // too, as the PSP tradition, without a legend entry of their own.
+  const actions = useActions(() => ({
+    confirm: { label: props.store.player()?.playing ? "pause" : "play", run: () => props.store.togglePause() },
+    media: { run: () => props.store.togglePause() },
+    sectionPrev: { label: "±10 s", run: () => props.store.seekTo(currentS - 10) },
+    sectionNext: { label: "±10 s", run: () => props.store.seekTo(currentS + 10) },
+    back: { label: "back", run: () => props.store.stopPlayback() },
+  }));
   onButtonPress(BTN.LEFT, () => props.store.seekTo(currentS - 10));
   onButtonPress(BTN.RIGHT, () => props.store.seekTo(currentS + 10));
-  onButtonPress(BTN.CROSS, () => props.store.stopPlayback());
 
   // ---- touch (inert without contacts) --------------------------------------
   // Screen thirds: double-tap left/right seeks, double-tap center pauses.
@@ -169,8 +172,8 @@ export default function Player(props: { store: YoutubeStore }) {
         <View class="absolute inset-0 items-center justify-center flex-col gap-2">
           <Text class="text-sm tracking-wide" style={{ textColor: DIM }}>
             {props.store.transport() === "http"
-              ? "STREAMING TO THE HOST — VIDEO PLANE IS PSP-ONLY"
-              : "VIDEO PLANE UNAVAILABLE"}
+              ? "Streaming to the host. The video plane is device-only."
+              : "Video plane unavailable"}
           </Text>
         </View>
       </Show>
@@ -201,30 +204,30 @@ export default function Player(props: { store: YoutubeStore }) {
         </View>
         <View class="flex-col gap-1 px-3 py-2 bg-[#000000aa]">
           <Show when={props.store.player()?.ended}>
-            <Text class="text-xs font-bold tracking-wide" style={{ textColor: RED }}>
-              ENDED — ◁ REWIND OR × BACK
+            <Text class="text-xs font-bold" style={{ textColor: ALERT }}>
+              {`Ended · ◁ rewind · ${actions.legend()}`}
             </Text>
           </Show>
           <Show when={props.store.player() && !props.store.player()!.playing && !props.store.player()!.ended}>
-            <Text class="text-xs font-bold tracking-wide" style={{ textColor: RED }}>
-              PAUSED
+            <Text class="text-xs font-bold" style={{ textColor: INK }}>
+              Paused
             </Text>
           </Show>
-          <View class="w-full h-[3] bg-[#2a3542] rounded-sm">
+          <View class="w-full h-[4] bg-[#ffffff55] rounded-sm">
             <View
               nodeRef={(n) => (bar = n)}
               class="w-full h-full rounded-sm"
-              style={{ bgColor: RED, scaleX: 0, originX: -0.5 }}
+              style={{ bgColor: BLUE, scaleX: 0, originX: -0.5 }}
             />
           </View>
           <View class="flex-row justify-between items-center">
             <Text nodeRef={(n) => (clock = n)} class="text-xs" style={{ textColor: INK, width: 110, lineHeight: 13 }}>
               0:00 / 0:00
             </Text>
-            <Text class="text-xs tracking-wide" style={{ textColor: DIM, lineHeight: 13 }}>
+            <Text class="text-xs" style={{ textColor: DIM, lineHeight: 13 }}>
               {hasFeature("input.touch")
-                ? "TAP HUD · 2×TAP SEEK · DRAG BAR · ▼ BACK"
-                : "○ PAUSE · ◁▷ ±10s · × BACK"}
+                ? "Tap HUD · 2×tap seek · drag bar · ▼ back"
+                : actions.legend()}
             </Text>
           </View>
         </View>

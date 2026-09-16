@@ -35,20 +35,24 @@ export interface ResolvedStream {
 
 export type Runner = (args: string[]) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
 
-export const spawnRunner: Runner = async (args) => {
+export async function runYt(args: string[], signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error("Download cancelled");
   // The proxy rides an explicit flag (beats env-var ambiguity inside yt-dlp).
   const proc = Bun.spawn(["yt-dlp", "--ignore-config", "--js-runtimes", `bun:${process.execPath}`, ...ytDlpProxyArgs(), ...args], {
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60000,
   });
+  const abort = () => proc.kill(); signal?.addEventListener("abort", abort, { once: true });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
+  signal?.removeEventListener("abort", abort);
   return { ok: code === 0, stdout, stderr };
-};
+}
+export const spawnRunner: Runner = args => runYt(args);
 
 /** Best-effort field pluck from one yt-dlp JSON line. */
 function toItem(j: Record<string, unknown>): SearchItem | null {

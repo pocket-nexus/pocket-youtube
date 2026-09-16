@@ -9,20 +9,15 @@
 import { createSignal } from "solid-js";
 import { runEffect } from "@pocketjs/framework/effects";
 import { virtualFrame } from "@pocketjs/framework/clock";
-import { platform } from "@pocketjs/framework/platform";
-import { onHostPush, resolveTransport, type Transport } from "./driver.ts";
+import { onHostPush, resolveTransport, playback, type Transport } from "./driver.ts";
 import type { HostMsg, ResultItem } from "./protocol.ts";
 import type { SearchModel } from "./search.ts";
-import type { MediaSource } from "@pocketjs/framework/media";
 
 export interface PlayerState {
   videoId: string;
   title: string;
   durationS: number;
   fps: number;
-  /** svc-relative .pkst path (videoOpen input). */
-  stream: string;
-  source?: MediaSource;
   position: number;
   playing: boolean;
   /** True once the host reported the source exhausted. */
@@ -44,6 +39,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   /** Bumped on every "playing" reply — the player screen re-opens the
    *  stream when it changes (fresh .pkst file per play/replay). */
   const [playSerial, setPlaySerial] = createSignal(0);
+  const [playReason, setPlayReason] = createSignal<"play" | "seek" | "resume">("play");
   /** Bumped when a FRESH search replaces the list (appends do not) — the
    *  browse screen focuses row 0 so ○ plays the first result immediately. */
   const [searchSerial, setSearchSerial] = createSignal(0);
@@ -51,11 +47,11 @@ export function createYoutubeStore(browse?: SearchModel) {
   let playbackGeneration = 0;
 
   onHostPush((msg: HostMsg) => {
-    if (msg.t === "offline") { setStatus("COMPANION DISCONNECTED — RECONNECTING"); setPhase("connect"); }
-    if (msg.t === "playback-error" && player()?.stream === msg.stream) {
+    if (msg.t === "offline") { setStatus("Companion disconnected. Reconnecting…"); setPhase("connect"); }
+    if (msg.t === "playback-error") {
       setPlayer(null);
       setPhase("browse");
-      setStatus(`ERROR: ${msg.message}`);
+      setStatus(`Error: ${msg.message}`);
     }
     if (msg.t === "ended") {
       const p = player();
@@ -65,16 +61,13 @@ export function createYoutubeStore(browse?: SearchModel) {
 
   const hello = (): void => {
     lastHello = virtualFrame();
-    // The device field negotiates the stream profile host-side: a vita
-    // build gets the 512x256@24/44.1k pipeline, everything else keeps the
-    // tuned PSP defaults (host/profiles.ts).
-    runEffect<HostMsg>("yt/hello", { device: { target: platform.target } }, (msg) => {
+    runEffect<HostMsg>("yt/hello", {}, (msg) => {
       if (msg.t === "ready") {
         setTransport(resolveTransport()); setStatus("");
         if (phase() === "connect") {
           const p = player();
           setPhase("browse");
-          if (p?.source) startPlayback(p.videoId, p.position);
+          if (p) startPlayback(p.videoId, p.position, "resume");
         }
       }
     });
@@ -83,7 +76,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   /** connect-phase retry pump (driven by the app's onFrame): re-probe the
    *  transport every ~2 s until the host answers. */
   const connectTick = (): void => {
-    if (phase() !== "connect") return;
+    if (phase() !== "connect" && resolveTransport() !== "none") return;
     const now = virtualFrame();
     if (lastHello < 0 || now - lastHello >= 120) hello();
   };
@@ -92,16 +85,16 @@ export function createYoutubeStore(browse?: SearchModel) {
     const q = query().trim();
     if (!q || searching()) return;
     setSearching(true);
-    setStatus("SEARCHING…");
+    setStatus("Searching…");
     runEffect<HostMsg>("yt/search", { q }, (msg) => {
       setSearching(false);
       if (msg.t === "results") {
         setResults(msg.items);
         setHasMore(msg.items.length > 0);
         if (msg.items.length > 0) setSearchSerial(searchSerial() + 1);
-        setStatus(msg.items.length === 0 ? "NO RESULTS" : "");
+        setStatus(msg.items.length === 0 ? "No results" : "");
       } else if (msg.t === "error") {
-        setStatus(msg.message === "offline" ? "HOST OFFLINE" : `ERROR: ${msg.message}`);
+        setStatus(msg.message === "offline" ? "Host offline" : `Error: ${msg.message}`);
         if (msg.message === "offline") setPhase("connect");
       }
     });
@@ -112,7 +105,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   const loadMore = (): void => {
     if (searching() || !hasMore()) return;
     setSearching(true);
-    setStatus("LOADING MORE…");
+    setStatus("Loading more…");
     runEffect<HostMsg>("yt/more", {}, (msg) => {
       setSearching(false);
       if (msg.t === "results") {
@@ -122,7 +115,7 @@ export function createYoutubeStore(browse?: SearchModel) {
         // focus repair pulls the focused index back onto the last real row.
         setStatus("");
       } else if (msg.t === "error") {
-        setStatus(`ERROR: ${msg.message}`);
+        setStatus(`Error: ${msg.message}`);
       }
     });
   };
@@ -131,11 +124,11 @@ export function createYoutubeStore(browse?: SearchModel) {
    *  pipelines observed on hardware) — one play request in flight at a time;
    *  taps while resolving are absorbed. */
   let playPending = false;
-  const startPlayback = (videoId: string, position = 0): void => {
-    if (playPending) return;
+  const startPlayback = (videoId: string, position = 0, reason: "play" | "resume" = "play"): boolean => {
+    if (playPending) return false;
     playPending = true;
     const owner = ++playbackGeneration;
-    setStatus("RESOLVING…");
+    setStatus("Resolving…");
     runEffect<HostMsg>("yt/play", { videoId, position }, (msg) => {
       if (owner !== playbackGeneration) return;
       playPending = false;
@@ -146,27 +139,28 @@ export function createYoutubeStore(browse?: SearchModel) {
           title: msg.title,
           durationS: msg.durationS,
           fps: msg.fps,
-          stream: msg.stream,
-          source: msg.source,
           position: msg.position,
           playing: true,
           ended: false,
         });
-        setPlaySerial(playSerial() + 1);
+        setPlayReason(reason); setPlaySerial(playSerial() + 1);
         setPhase("player");
       } else if (msg.t === "error") {
-        setStatus(`ERROR: ${msg.message}`);
+        setStatus(`Error: ${msg.message}`);
       }
     });
+    return true;
   };
-  const play = (item: ResultItem): void => startPlayback(item.videoId);
+  const play = (item: ResultItem): void => { startPlayback(item.videoId); };
 
   const togglePause = (): void => {
     const p = player();
     if (!p || p.ended) return;
     const kind = p.playing ? "yt/pause" : "yt/resume";
     setPlayer({ ...p, playing: !p.playing });
-    runEffect<HostMsg>(kind, {}, () => {});
+    runEffect<HostMsg>(kind, {}, msg => {
+      if (msg.t === "error") { setPlayer(p); setStatus(`Error: ${msg.message}`); }
+    });
   };
 
   /** Absolute seek; the host clamps to the source range. */
@@ -174,15 +168,17 @@ export function createYoutubeStore(browse?: SearchModel) {
     const p = player();
     if (!p || playPending) return;
     const owner = ++playbackGeneration;
-    if (p.source) { playPending = true; setStatus("SEEKING…"); }
+    playPending = true; setStatus("Seeking…");
     setPlayer({ ...p, playing: true, ended: false });
     runEffect<HostMsg>("yt/seek", { to: Math.max(0, seconds) }, msg => {
       if (owner !== playbackGeneration) return;
       playPending = false;
       if (msg.t === "playing") {
-        setPlayer({ ...p, stream: msg.stream, source: msg.source, position: msg.position, playing: true, ended: false });
-        setPlaySerial(playSerial() + 1); setStatus("");
-      } else if (msg.t === "error") setStatus(`ERROR: ${msg.message}`);
+        setPlayer({ ...p, position: msg.position, playing: true, ended: false });
+        setPlayReason("seek"); setPlaySerial(playSerial() + 1); setStatus("");
+      } else if (msg.t === "state") {
+        setPlayer({ ...p, position: msg.position, playing: msg.playing, ended: false }); setStatus("");
+      } else if (msg.t === "error") { setPlayer(p); setStatus(`Error: ${msg.message}`); }
     });
   };
 
@@ -199,6 +195,7 @@ export function createYoutubeStore(browse?: SearchModel) {
   };
 
   return {
+    playback, playReason,
     phase,
     transport,
     query,

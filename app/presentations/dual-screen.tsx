@@ -1,48 +1,82 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type JSX } from "solid-js";
-import { AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
+// app/presentations/dual-screen.tsx — Pocket YouTube across two screens
+// (New 3DS): video on the top screen, controls and browsing on the touch
+// bottom screen. Both displays share one playback lifetime; browsing never
+// unmounts the video.
+//
+// The HIG's second-screen rule (docs/HIG.md §3.3): the bottom screen is the
+// touch modality's control surface, every intent renders there as a tile,
+// and the pad keeps its buttons meaning at the same time. The search field
+// shares the navigation bar; the list is the framework's ClassicList with
+// the same selection wash the PSP draws; the keyboard is the framework's
+// classic system keyboard on the auxiliary surface.
+import { createEffect, createMemo, createSignal, Show, untrack, type JSX } from "solid-js";
+import { useActions } from "@pocketjs/framework/actions";
+import { CLASSIC, ClassicBar, ClassicFooter, ClassicList } from "@pocketjs/framework/classic";
+import { AuxiliaryPortal, AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
 import { auxiliaryViewport } from "@pocketjs/framework/display";
-import { getOps, hostViewport } from "@pocketjs/framework/host";
-import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
-import { BTN } from "@pocketjs/framework/input";
 import { createGesture } from "@pocketjs/framework/gesture";
-import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
+import { getOps, hostViewport } from "@pocketjs/framework/host";
+import { BTN } from "@pocketjs/framework/input";
+import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
+import { createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
+import { glyph } from "@pocketjs/framework/modality";
 import { offload } from "@pocketjs/framework/offload";
-import { createOsk } from "@pocketjs/framework/osk";
-import { VirtualList, type VirtualListHandle } from "@pocketjs/framework/virtual-list";
+import { createOsk, Osk } from "@pocketjs/framework/osk";
 import type { NodeMirror } from "@pocketjs/framework/renderer";
-import type { YoutubeStore } from "./store.ts";
-import type { ResultItem } from "./protocol.ts";
-import { createResourceView } from "@pocketjs/framework/resource-view";
-import { ResourceImage } from "@pocketjs/framework/resource";
-import { SearchKeyboard } from "./search-keyboard.tsx";
-import { rendition, type ArtworkCollection } from "./artwork.ts";
+import { installSystemLayer } from "@pocketjs/framework/system";
+import type { VirtualListHandle } from "@pocketjs/framework/virtual-list";
+import { createYoutubeResources, type ArtworkCollection } from "../artwork.ts";
+import type { ResultItem } from "../protocol.ts";
+import { ArtworkRow, time } from "../rows.tsx";
+import { createCompanionSearch } from "../search.ts";
+import { createYoutubeStore, type YoutubeStore } from "../store.ts";
 
-const BG = "#d9dde3", INK = "#283444", DIM = "#667485", BLUE = "#2676cb";
-const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+const BG = CLASSIC.background, INK = CLASSIC.ink, DIM = CLASSIC.dim, BLUE = CLASSIC.blue;
 function Skin(props: { src: string; w: number; h: number }) {
   return <Image src={props.src} class="absolute" style={{ insetL: 0, insetT: 0, width: props.w, height: props.h }} />;
 }
-function Tile(props: { x: number; y: number; w: number; h: number; label: string; icon?: string; accent?: boolean; onPress: () => void }) {
-  return <Focusable onPress={props.onPress} class="absolute rounded-md overflow-hidden items-center justify-center flex-col focus:border-[#2676cb] active:opacity-70"
-    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h }}>
-    <Skin src={props.h === 26 ? "classic-small-button.png" : props.w > 200 ? "classic-wide-button.png" : props.accent ? "classic-play-button.png" : "classic-button.png"}
-      w={props.h === 26 ? 128 : props.w > 200 ? 512 : props.accent ? 256 : 128} h={props.h < 30 ? 32 : 64} />
+const smallCaps: Record<number, string> = { 56: "classic-small-56.png", 68: "classic-small-68.png", 70: "classic-small-70.png", 76: "classic-small-76.png", 152: "classic-small-152.png" };
+/** A bottom-screen control: one intent rendered as a baked-cap tile. */
+function Tile(props: { x: number; y: number; w: number; h: number; label: string; icon?: string; accent?: boolean; disabled?: boolean; onPress: () => void }) {
+  return <Focusable onPress={() => { if (!props.disabled) props.onPress(); }} class="absolute rounded-md overflow-hidden items-center justify-center flex-col focus:border-[#2676cb] active:opacity-70"
+    style={{ insetL: props.x, insetT: props.y, width: props.w, height: props.h, opacity: props.disabled ? .45 : 1 }}>
+    <Skin src={props.h === 26 ? smallCaps[props.w] : props.w > 200 ? "classic-wide-button.png" : props.accent ? "classic-play-button.png" : "classic-button.png"}
+      w={2 ** Math.ceil(Math.log2(props.w))} h={props.h < 30 ? 32 : 64} />
     <Show when={props.icon}><Image src={props.icon!} style={{ width: 32, height: 32 }} /></Show>
     <Text class="text-xs font-bold" style={{ textColor: props.accent ? "#ffffff" : INK }}>{props.label}</Text>
   </Focusable>;
 }
-function Navigation(props: { title: string; children?: JSX.Element }) {
-  return <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 0, width: 320, height: 36, overflow: 1 }}>
-    <Skin src="classic-nav.png" w={512} h={64} />
-    <View class="absolute" style={{ insetT: 11 }}><Text class="text-sm font-bold" style={{ textColor: "#ffffff" }}>{props.title}</Text></View>
-    <View class="absolute" style={{ insetT: 10 }}><Text class="text-sm font-bold" style={{ textColor: "#46566c" }}>{props.title}</Text></View>
-    {props.children}
+/** The bottom screen's bar: the framework's ClassicBar, absolute at the top. */
+function Navigation(props: { title?: string; children?: JSX.Element }) {
+  return <View class="absolute" style={{ insetL: 0, insetT: 0, width: 320, height: 36 }}>
+    <ClassicBar width={320} title={props.title}>{props.children}</ClassicBar>
   </View>;
 }
+
+/** The presentation root: companion-backed search and artwork, one store,
+ *  the per-frame driver pump. */
+export default function DualScreenApp() {
+  const resources = createYoutubeResources();
+  const store = createYoutubeStore(createCompanionSearch(resources.runtime));
+  onFrame(() => {
+    store.connectTick();
+  });
+  // Hold SELECT: identity, connection state, the verbs of the moment — on
+  // the touch screen, where the controls live.
+  installSystemLayer({
+    title: "Pocket YouTube",
+    version: "0.3.0",
+    surface: "auxiliary",
+    status: () => (store.phase() === "connect" ? "Waiting for the Mac companion over WiFi" : "Companion connected over WiFi"),
+    items: () => (store.player() ? [{ label: "Stop playback", run: store.stopPlayback }] : []),
+  });
+  return <DualScreen store={store} artwork={resources.artwork} />;
+}
+
 /** Both displays share a playback lifetime. Browsing never unmounts video. */
-export default function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
+export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
   const artwork = props.artwork;
-  const native = mediaPlayer(), top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
+  const native = props.store.playback, top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
   const playingItem = createMemo<Pick<ResultItem, "videoId" | "title" | "channel"> | undefined>(previous => {
     const player = props.store.player();
     if (!player) return undefined;
@@ -50,7 +84,9 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
       ?? (previous?.videoId === player.videoId ? previous : { videoId: player.videoId, title: player.title, channel: "" });
   });
   const [panel, setPanel] = createSignal<"controls" | "browse">("browse");
+  const back = () => setPanel(panel() === "browse" && props.store.player() ? "controls" : "browse");
   const [snapshot, setSnapshot] = createSignal<MediaStatus | null>(null);
+  const [pictureVisible, setPictureVisible] = createSignal(false);
   const [volume, setVolume] = createSignal(0.8);
   const [error, setError] = createSignal("");
   let plane: NodeMirror | undefined, frame = 0, lastSerial = -1;
@@ -59,15 +95,16 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     if (serial === lastSerial) return;
     lastSerial = serial;
     const player = untrack(props.store.player);
-    if (!player?.source) return;
-    setError(""); setSnapshot(null); setPanel("controls");
-    if (!native.open(player.source)) setError("PLAYER BUSY — TAP RETRY");
+    if (!player) return;
+    setError(""); setSnapshot(null);
+    if (untrack(props.store.playReason) === "play") { setPanel("controls"); setPictureVisible(false); }
     native.volume(volume());
     if (plane) getOps().setImage(plane.id, native.texture());
   });
   onFrame(() => {
     if (++frame % 6) return;
     const status = native.status(); setSnapshot(status);
+    if (status.phase !== "opening" && status.presentedFrames > 0) setPictureVisible(true);
     if (status.phase === "error") setError(status.error);
     const p = props.store.player();
     if (p && status.phase !== "opening" && status.phase !== "idle" && status.phase !== "error")
@@ -75,37 +112,39 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
     if (frame % 120 === 0 && p && offload().connected())
       offload().request("youtube.metrics", JSON.stringify(status), () => {});
   });
-  onCleanup(() => native.close());
   const changeVolume = (value: number) => { setVolume(Math.max(0, Math.min(1, value))); native.volume(volume()); };
   const playPause = () => props.store.player()?.ended ? props.store.seekTo(0) : props.store.togglePause();
-  const stop = () => { native.close(); props.store.stopPlayback(); setPanel("browse"); setError(""); };
-  onButtonPress(BTN.START, playPause);
-  onButtonPress(BTN.LTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) - 10));
-  onButtonPress(BTN.RTRIGGER, () => props.store.seekTo((props.store.player()?.position ?? 0) + 10));
-  onButtonPress(BTN.CROSS, () => panel() === "browse" && props.store.player() ? setPanel("controls") : setPanel("browse"));
+  const stop = () => { props.store.stopPlayback(); setPanel("browse"); setError(""); };
   const position = () => props.store.player()?.position ?? 0;
   const duration = () => props.store.player()?.durationS ?? 0;
+  // The pad's intents while a video is up: the same verbs the tiles offer.
+  useActions(() => ({
+    media: { label: props.store.player()?.playing ? "pause" : "play", run: playPause, when: () => !!props.store.player() },
+    sectionPrev: { label: "±10 s", run: () => props.store.seekTo(position() - 10), when: () => !!props.store.player() },
+    sectionNext: { label: "±10 s", run: () => props.store.seekTo(position() + 10), when: () => !!props.store.player() },
+    back: { label: panel() === "browse" ? "controls" : "browse", run: back, when: () => !!props.store.player() },
+  }));
   return <>
     <View style={{ width: top.w, height: top.h, bgColor: "#000000" }}>
       <Image nodeRef={n => { plane = n; getOps().setImage(n.id, native.texture()); }}
-        style={{ width: top.w, height: top.h, opacity: props.store.player() && (snapshot()?.presentedFrames ?? 0) > 0 ? 1 : 0 }} />
+        style={{ width: top.w, height: top.h, opacity: props.store.player() && pictureVisible() ? 1 : 0 }} />
       <Show when={!props.store.player()}>
         <View class="absolute inset-0 items-center justify-center flex-col gap-3">
           <View style={{ width: 220, height: 49, overflow: 1 }}><Skin src="yt-logo-white.png" w={256} h={64} /></View>
           <Text class="text-sm" style={{ textColor: "#abb3bd" }}>Find something to watch below.</Text>
         </View>
       </Show>
-      <Show when={props.store.player() && !(snapshot()?.presentedFrames)}>
+      <Show when={props.store.player() && !pictureVisible()}>
         <View class="absolute inset-0 items-center justify-center">
-          <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "PLAYBACK UNAVAILABLE" : "BUFFERING VIDEO…"}</Text>
+          <Text class="text-sm" style={{ textColor: "#ffffff" }}>{error() ? "Playback unavailable" : "Buffering video…"}</Text>
         </View>
       </Show>
     </View>
     <AuxiliarySurface>{() => <View style={{ width: bottom.width, height: bottom.height, bgColor: BG }}>
-      <Skin src="classic-linen.png" w={512} h={256} />
-      <Show when={panel() === "controls" && props.store.player()} fallback={<Browser store={props.store} artwork={artwork} returnToPlayer={() => setPanel("controls")} />}>
+      <Show when={panel() === "controls" && props.store.player()}
+        fallback={<Browser store={props.store} artwork={artwork} returnToPlayer={() => setPanel("controls")} />}>
         <Navigation title="Now Playing"><Tile x={244} y={5} w={68} h={26} label="Videos" onPress={() => setPanel("browse")} /></Navigation>
-        <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><Artwork item={playingItem()!} artwork={artwork} compact /></View>
+        <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 48 }}><ArtworkRow item={playingItem()!} artwork={artwork} width={320} compact /></View>
         <SeekCard position={position} duration={duration} seek={props.store.seekTo} status={() => props.store.status() || (snapshot()?.phase === "buffering" ? "Buffering…" : "")} />
         <Tile x={8} y={124} w={72} h={56} label="10 sec" icon="classic-back.png" onPress={() => props.store.seekTo(position() - 10)} />
         <Tile x={88} y={124} w={144} h={56} label={props.store.player()?.ended ? "Replay" : props.store.player()?.playing ? "Pause" : "Play"}
@@ -116,7 +155,7 @@ export default function DualScreen(props: { store: YoutubeStore; artwork: Artwor
         </Focusable>
         <VolumeTile value={volume} change={changeVolume} />
         <Tile x={244} y={196} w={68} h={26} label="Stop" onPress={stop} />
-        <View class="absolute" style={{ insetL: 77, insetT: 227 }}><Text class="text-xs" style={{ textColor: DIM }}>L / R skip     B browse</Text></View>
+        <View class="absolute" style={{ insetL: 77, insetT: 227 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${glyph("ltrigger")} / ${glyph("rtrigger")} skip     ${glyph("cross")} browse`}</Text></View>
         <Show when={error()}>
           <View class="absolute inset-0 flex-col items-center justify-center gap-3" style={{ bgColor: BG }}>
             <Text class="text-sm" style={{ textColor: INK, width: 288 }}>{error()}</Text>
@@ -163,46 +202,44 @@ function VolumeTile(props: { value: () => number; change: (v: number) => void })
     onDown: c => props.change((c.x - 52) / 170), onMove: c => props.change((c.x - 52) / 170) });
   return <View class="absolute" style={{ insetL: 52, insetT: 204 }}><Rail width={170} ratio={props.value()} /></View>;
 }
+
+/** The bottom-screen browser: the field in the navigation bar, the framework
+ *  list under it, the footer with the legend or the way back to playback. */
 function Browser(props: { store: YoutubeStore; artwork: ArtworkCollection; returnToPlayer: () => void }) {
   const keyboard = createOsk({ value: props.store.query, setValue: props.store.setQuery, maxLength: 200, onCommit: props.store.search });
   const [list, setList] = createSignal<VirtualListHandle | null>(null);
   createEffect(() => { props.store.searchSerial(); list()?.focusRow(0); });
-  onButtonPress(BTN.TRIANGLE, () => keyboard?.open());
-  onFrame(() => {
-    if (keyboard?.isOpen()) return;
-    const scroller = list()?.scroller;
-    props.store.prefetch(Math.max(0, Math.floor((scroller?.offset() ?? 0) / 64)), 3, scroller?.velocity() ?? 0);
-  });
-  createResourceView(props.artwork, { demand: () => {
-    const first = Math.floor((list()?.scroller.offset() ?? 0) / 64);
-    return props.store.results().slice(first + 2, first + 5).flatMap(item => [
-      { input: rendition(item, "text"), priority: 20 }, { input: rendition(item, "thumbnail"), priority: 30 },
-    ]);
-  } });
+  const actions = useActions(() => ({
+    confirm: { label: "play", when: () => props.store.results().length > 0 },
+    action: { label: "search", run: () => keyboard.open() },
+  }));
   return <View style={{ width: 320, height: 240 }}>
-    <Navigation title="Videos" />
-    <View class="absolute" style={{ insetL: 8, insetT: 40, width: 304, height: 28 }}>
-      <Focusable onPress={keyboard.open} class="w-full h-[28] rounded-lg bg-white px-3 py-1 border border-[#9aa5b2]" style={{ overflow: 1 }}>
+    <Navigation title="">
+      <Focusable onPress={keyboard.open} class="absolute flex-col justify-center rounded-lg bg-white px-3 border border-[#9aa5b2] focus:border-[#2676cb] active:bg-[#e3effe]"
+        style={{ insetL: 8, insetT: 5, width: 304, height: 26, overflow: 1 }}>
         <Text class="text-sm" style={{ textColor: props.store.query() || keyboard.isOpen() ? INK : DIM }}>{keyboard.isOpen()
-          ? keyboard.display().slice(Math.max(0, keyboard.caret() - 32), Math.max(0, keyboard.caret() - 32) + 38)
+          ? keyboard.display().slice(Math.max(0, keyboard.caret() - 30), Math.max(0, keyboard.caret() - 30) + 36)
           : props.store.query() || "Search YouTube"}</Text>
       </Focusable>
-    </View>
-    <View class="absolute" style={{ insetL: 0, insetT: 74, width: 320, height: 138 }}>
+    </Navigation>
+    <View class="absolute" style={{ insetL: 0, insetT: 36, width: 320, height: 180 }}>
       <Show when={props.store.results().length} fallback={<SearchWelcome store={props.store} open={keyboard.open} />}>
-        <VirtualList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={138} overscan={0}
-          inputActive={() => !keyboard?.isOpen()} ref={setList}
+        <ClassicList surface="auxiliary" count={props.store.results().length} rowHeight={64} height={180}
+          inputActive={() => !keyboard.isOpen()} ref={setList}
           onRowPress={index => props.store.play(props.store.results()[index])}
-          renderRow={index => <Artwork item={props.store.results()[index]} artwork={props.artwork} active={() => list()?.focusedIndex() === index} />} />
+          hasMore={props.store.hasMore} loadingMore={props.store.searching} onLoadMore={props.store.loadMore}
+          onWindow={(first, visible, velocity) => { if (!keyboard.isOpen()) props.store.prefetch(first, visible, velocity); }}
+          renderRow={index => <ArtworkRow item={props.store.results()[index]} artwork={props.artwork} width={320} />} />
       </Show>
     </View>
-    <View class="absolute items-center justify-center" style={{ insetL: 0, insetT: 212, width: 320, height: 28, overflow: 1 }}>
-      <Skin src="classic-footer.png" w={512} h={32} />
-      <Show when={props.store.player()} fallback={<Text class="text-xs" style={{ textColor: DIM }}>{props.store.status() || (props.store.results().length ? "Touch to play  ·  X to search" : "Touch or press X to search")}</Text>}>
-        <Focusable onPress={props.returnToPlayer} class="w-full h-full items-center justify-center active:opacity-70"><View class="flex-row items-center gap-1"><Text class="text-xs font-bold" style={{ textColor: INK }}>Now Playing</Text><Image src="classic-chevron.png" style={{ width: 16, height: 16 }} /></View></Focusable>
+    <View class="absolute" style={{ insetL: 0, insetT: 216, width: 320, height: 24 }}>
+      <Show when={props.store.player()} fallback={<ClassicFooter width={320} text={props.store.status() || (props.store.results().length ? `Tap to play · ${actions.legend()}` : `Touch the field or press ${glyph("triangle")} to search`)} alert={props.store.status().startsWith("Error")} />}>
+        <Focusable onPress={props.returnToPlayer} class="active:opacity-70"><ClassicFooter width={320} text="Now Playing ›" /></Focusable>
       </Show>
     </View>
-    <Show when={keyboard.isOpen()}><SearchKeyboard osk={keyboard} /></Show>
+    <AuxiliaryPortal>{() => <View style={{ posType: 1, insetB: 0, insetL: 0, width: 320, hitPass: 1 }}>
+      <Osk osk={keyboard} surface="auxiliary" theme="classic" hint={`${glyph("cross")} cancel · ${glyph("start")} search`} />
+    </View>}</AuxiliaryPortal>
   </View>;
 }
 function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
@@ -224,28 +261,8 @@ function SearchWelcome(props: { store: YoutubeStore; open: () => void }) {
     <View class="absolute" style={{ insetL: 66, insetT: 39, width: 218 }}><Text class="text-xs" style={{ textColor: DIM }}>{copy()[1]}</Text></View>
     <View class="absolute" style={{ insetL: 14, insetT: 82 }}><Text class="text-xs font-bold" style={{ textColor: BLUE }}>{state() === "ready" ? "Tap to search" : "Edit search"}</Text></View>
     <View class="absolute rounded-sm items-center justify-center" style={{ insetL: 236, insetT: 78, width: 22, height: 20, bgColor: "#f8f9fb", borderWidth: 1, borderColor: "#b1bccb" }}>
-      <Text class="text-xs font-bold" style={{ textColor: DIM }}>X</Text>
+      <Text class="text-xs font-bold" style={{ textColor: DIM }}>{glyph("triangle")}</Text>
     </View>
     <Image src="classic-chevron.png" class="absolute" style={{ insetL: 269, insetT: 80, width: 16, height: 16 }} />
   </Focusable>;
-}
-function Artwork(props: { item: Pick<ResultItem, "videoId" | "title" | "channel"> & Partial<ResultItem>; artwork: ArtworkCollection; active?: () => boolean; compact?: boolean }) {
-  const text = () => rendition(props.item, "text"), thumbnail = () => rendition(props.item, "thumbnail");
-  const view = createResourceView(props.artwork, { demand: () => [
-    { input: text(), priority: 0, pin: true }, { input: thumbnail(), priority: 10, pin: true },
-  ] });
-  return <View style={{ width: 320, height: props.compact ? 48 : 64, overflow: 1 }}>
-    <Show when={!props.compact}><Skin src={props.active?.() ? "classic-row-selected.png" : "classic-row.png"} w={512} h={64} /></Show>
-    <ResourceImage state={() => view.state(thumbnail())} class="absolute" style={{ insetL: 10, insetT: props.compact ? 4 : 8, width: 72, height: 40, overflow: 1 }}
-      fallback={() => <View class="items-center justify-center" style={{ width: 72, height: 40, bgColor: "#b0b9c5" }}><Image src="classic-play.png" style={{ width: 24, height: 24, opacity: .7 }} /></View>} />
-    <ResourceImage state={() => view.state(text())} class="absolute" style={{ insetL: 92, insetT: props.compact ? 4 : 7, width: 192, height: 36, overflow: 1 }}
-      fallback={() => <View class="flex-col gap-1" style={{ width: 192, height: 36, paddingT: 3 }}>
-        <For each={[180, 138, 80]}>{width => <View style={{ width, height: 6, bgColor: "#d0d7df" }} />}</For>
-      </View>} />
-    <Show when={!props.compact}>
-      <View class="absolute" style={{ insetL: 10, insetT: 49 }}><Text class="text-xs" style={{ textColor: DIM }}>{time(props.item.durationS ?? 0)}</Text></View>
-      <View class="absolute" style={{ insetL: 92, insetT: 47 }}><Text class="text-xs" style={{ textColor: DIM }}>{`${(props.item.views ?? 0) >= 1000 ? `${Math.floor((props.item.views ?? 0) / 1000)}K` : props.item.views ?? 0} views`}</Text></View>
-      <Image src="classic-chevron.png" class="absolute" style={{ insetL: 296, insetT: 18, width: 24, height: 24 }} />
-    </Show>
-  </View>;
 }

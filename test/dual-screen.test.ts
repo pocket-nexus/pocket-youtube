@@ -1,18 +1,32 @@
 import { expect, test } from "bun:test";
 import { createWasmUi } from "../vendor/pocketjs/hosts/web/wasm-ops.js";
+import { BTN } from "../vendor/pocketjs/contracts/spec/spec.ts";
 import { __packTouch } from "../vendor/pocketjs/framework/src/touch.ts";
-import { searchKeys, type KeyboardLayer } from "../app/search-keyboard-layout.ts";
+import { oskKeyCenter } from "../vendor/pocketjs/tests/osk-script.ts";
+import { oskMetrics, type OskLayerName } from "../vendor/pocketjs/framework/src/osk-layout.ts";
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdirSync } from "node:fs";
 
-test("auxiliary keyboard, playback controls, local scrubbing and reconnect use the complete app", async () => {
+test("auxiliary keyboard, paged browsing, playback controls, scrubbing and reconnect use the complete app", async () => {
   const wasm = await createWasmUi(await Bun.file("vendor/pocketjs/hosts/web/pocketjs.wasm").arrayBuffer(), { width: 400, height: 240 });
   wasm.createAuxiliarySurface(320, 240);
   const globals = globalThis as Record<string, any>, replies: string[] = [], commands: any[] = [];
   let session = 1, opened = 0, closed = 0, paused = false, volume = 1, position = 0;
-  let phase = "idle", job = 0;
+  let phase = "idle", job = 0, holdPlayReply = false, playFailure = "";
+  let presentedFrames = 0;
+  const textNodes = new Map<number, string>();
+  const parents = new Map<number, number>();
+  const insertBefore = wasm.ops.insertBefore, removeChild = wasm.ops.removeChild;
+  wasm.ops.insertBefore = (parent, child, anchor) => { parents.set(child, parent); insertBefore(parent, child, anchor); };
+  wasm.ops.removeChild = (parent, child) => { parents.delete(child); removeChild(parent, child); };
+  const setText = wasm.ops.setText, replaceText = wasm.ops.replaceText, destroyNode = wasm.ops.destroyNode;
+  wasm.ops.setText = (id, value) => { textNodes.set(id, value); setText(id, value); };
+  wasm.ops.replaceText = (id, value) => { textNodes.set(id, value); replaceText(id, value); };
+  wasm.ops.destroyNode = id => { parents.delete(id); textNodes.delete(id); destroyNode(id); };
+  const attached = (id: number): boolean => id === 1 || id === wasm.ops.__auxiliarySurface!.root || (parents.has(id) && attached(parents.get(id)!));
+  const hasText = (value: string) => [...textNodes].some(([id, text]) => attached(id) && text.includes(value));
   const jobs = new Map<number, any>();
   const rowsFixture = [
     ["京都を歩く · A quiet afternoon", "Pocket travel"], ["A little jazz for your day", "Blue Note Sessions"],
@@ -49,13 +63,13 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
           result = { job: ++job }; jobs.set(job, { t: "results", items: rowsFixture });
         } else if (data.t === "play" || data.t === "seek") {
           position = data.to ?? data.position ?? 0;
-          result = { job: ++job }; jobs.set(job, { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
+          result = { job: ++job }; jobs.set(job, playFailure === "request" ? { t: "error", message: "Fixture source failure" } : { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
         } else result = { t: "state", playing: false, position };
       } else if (request.method === "youtube.search") {
         searches.push(data);
         result = data.offset >= pagesReadyThrough ? { pending: true } : { offset: data.offset,
           items: rowsFixture.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < rowsFixture.length };
-      } else if (request.method === "youtube.poll") result = { state: "done", value: jobs.get(data.job) };
+      } else if (request.method === "youtube.poll") result = holdPlayReply && jobs.get(data.job)?.t === "playing" ? { state: "pending" } : { state: "done", value: jobs.get(data.job) };
       else if (request.method === "youtube.artwork") {
         const key = `${data.videoId}:${data.kind}`; artworkRequests.push(key);
         result = data.kind === "thumbnail" && !thumbnailsReady ? { pending: true } : artworkReplies.get(key);
@@ -70,10 +84,11 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     },
   };
   globals.media = {
-    open: () => { opened++; phase = "playing"; return true; }, close: () => { closed++; phase = "idle"; },
+    open: () => { presentedFrames = paused ? 0 : 30; opened++; phase = "playing"; paused = false; return true; },
+    close: () => { closed++; phase = "idle"; },
     paused: (value: boolean) => { paused = value; }, volume: (value: number) => { volume = value; }, texture: () => texture,
     status: () => JSON.stringify({ phase: paused && phase === "playing" ? "paused" : phase, positionMs: position * 1000, bufferedMs: 300,
-      decodedFrames: phase === "playing" ? 30 : 0, presentedFrames: phase === "playing" ? 30 : 0,
+      decodedFrames: phase === "playing" ? presentedFrames : 0, presentedFrames: phase === "playing" ? presentedFrames : 0,
       droppedFrames: 0, receivedBytes: 10000, decodeMaxUs: 1000, audioUnderruns: 0, hardware: true, error: "" }),
   };
   (0, eval)(await Bun.file("vendor/pocketjs/dist/3ds/guest/pocket-youtube.js").text());
@@ -86,6 +101,14 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     }
   };
   const tap = (x: number, y: number, surface = 1) => { step(1, x, y, surface); step(1); step(10); };
+  const back = () => { globals.frame(BTN.CROSS); wasm.tick(); step(12); };
+  // The two side rims of a baked cap must both survive the rendered clip.
+  const completeCap = (x: number, width: number) => {
+    const pixels = wasm.renderAuxiliary();
+    for (let y = 14; y <= 21; y++) for (let c = 0; c < 3; c++) {
+      expect(Math.abs(pixels[(y * 320 + x + 1) * 4 + c] - pixels[(y * 320 + x + width - 2) * 4 + c])).toBeLessThan(8);
+    }
+  };
   mkdirSync("out/dual-screen", { recursive: true });
   const capture = async (name: string) => {
     await Bun.write(`out/dual-screen/${name}-top.png`, encodePNG(wasm.render().slice(), 400, 240));
@@ -103,24 +126,26 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
     }
   }
   expect(Math.abs((right - left + 1) / (bottom - top + 1) - 37 / 26)).toBeLessThan(.05);
-  tap(24, 54); await capture("keyboard");
-  const key = (label: string, layer: KeyboardLayer = "lower") => {
-    const key = searchKeys(layer).find(key => key.ch === label || key.action === label);
-    if (!key) throw new Error(`Missing key ${label}`);
-    tap(key.x + key.w / 2, key.y + 15);
-  };
+  tap(24, 18); await capture("keyboard");
+  // The framework's system keyboard on the auxiliary surface: the staggered
+  // layout at 30 px rows under the classic theme's 14 px legend, docked at
+  // the bottom of the 320x240 screen.
+  const AUX = { w: 320, h: 240 }, KEYBOARD = oskMetrics("staggered", 30, 14);
+  const keyAt = (label: string, layer: OskLayerName = "lower") => oskKeyCenter("staggered", layer, label, AUX, KEYBOARD);
+  const key = (label: string, layer?: OskLayerName) => { const [x, y] = keyAt(label, layer); tap(x, y); };
   const cap = () => {
-    const pixels = wasm.renderAuxiliary(), output: number[] = [];
-    for (let y = 100; y < 130; y++) for (let x = 2; x < 30; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
+    // The 'q' cap: the pressed look must clear on release.
+    const [qx, qy] = keyAt("q"), pixels = wasm.renderAuxiliary(), output: number[] = [];
+    for (let y = qy - 14; y < qy + 15; y++) for (let x = qx - 12; x < qx + 13; x++) output.push(...pixels.slice((y * 320 + x) * 4, (y * 320 + x) * 4 + 4));
     return output;
   };
   const neutralCap = cap(); key("q"); expect(cap()).toEqual(neutralCap);
   await capture("keyboard-typed");
-  key("w"); const deletion = searchKeys("lower").find(k => k.action === "delete")!;
-  step(35, deletion.x + 19, deletion.y + 15); step(); key("q"); key("w"); key(" ");
-  const space = searchKeys("lower").find(k => k.ch === " ")!;
-  step(16, space.x + 80, space.y + 15); step(1, space.x + 70, space.y + 15); step();
-  key("delete"); key("search"); step(45);
+  key("w"); const [deleteX, deleteY] = keyAt("⌫");
+  step(35, deleteX, deleteY); step(); key("q"); key("w"); key(" ");
+  const [spaceX, spaceY] = keyAt(" ");
+  step(16, spaceX + 30, spaceY); step(1, spaceX + 20, spaceY); step();
+  key("⌫"); key("✓"); step(45);
   expect(searches[0]?.query).toBe("q");
   expect(commands.some(c => c.t === "search" || c.t === "more")).toBe(false);
   expect(searches.some(input => input.offset === 5)).toBe(true);
@@ -137,7 +162,7 @@ test("auxiliary keyboard, playback controls, local scrubbing and reconnect use t
   step(1, 180, 80); for (let y = 100; y <= 200; y += 20) step(1, 180, y); step(); step(180);
   expect(artworkRequests.filter(key => key === "fixture0000:text")).toHaveLength(firstTitleLoads);
   expect(artworkRequests.filter(key => key === "fixture0000:thumbnail")).toHaveLength(firstThumbLoads);
-  tap(120, 100); step(45); expect(opened).toBe(1);
+  tap(120, 72); step(45); expect(opened).toBe(1);
   await capture("controls");
   tap(160, 150); expect(paused).toBe(true); expect(opened).toBe(1);
   tap(160, 150); expect(paused).toBe(false); expect(opened).toBe(1);
