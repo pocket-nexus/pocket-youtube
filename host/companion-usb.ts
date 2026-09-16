@@ -5,10 +5,8 @@
 // The same Worker that serves the 3DS over TCP (companion-worker.ts) runs
 // here behind PocketJS's USB offload provider: requests and replies ride
 // fixed slots under <dir>/pocket-offload/<slot>/, search pages and artwork
-// arrive as offload replies, and the two things a PSP cannot take through
-// a 4 KiB record — a 512×64 card texture and the video ring — land as side
-// files under <dir>/pocket-svc/youtube/ for the native loadImgFile and
-// videoOpen ops. One data layer for both devices; the transport differs.
+// arrive as offload replies, and video travels through the framework media
+// provider as a ring under <dir>/pocket-svc/youtube/.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { connectOffloadUsbProvider } from "../vendor/pocketjs/tools/offload-usb-provider.ts";

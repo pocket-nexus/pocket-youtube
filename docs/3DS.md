@@ -49,61 +49,6 @@ and a ticketed TCP endpoint for media.
 `bun run 3ds --cia` also builds an installable CIA. A native ABI change requires
 reinstalling the launcher; a guest package alone cannot install a decoder.
 
-## Save videos and captions
-
-**Hold a search result for half a second to download it.** Release after the
-hold does not start playback. Dragging the row scrolls the list. Holding the
-title area in Now Playing saves that video with its selected caption track.
-The Saved button opens downloads before a companion connection is available.
-
-The companion resolves the source, prepares captions and converts video to
-the existing MVD-compatible format. Saved shows conversion percentage, then
-**the percentage transferred to the 3DS SD card**, followed by SD verification.
-Cancel stops the active stage. Source, network, checksum and SD write failures
-show an error; **Retry restarts the same video and caption selection**.
-A video without captions can be saved and is marked as having no captions. A failure fetching an available
-caption track stops preparation so the saved file does not omit that track.
-
-**Saved playback needs neither Wi-Fi nor a running companion.** Tap a saved
-video to play it; pause, volume, L/R and scrubbing use the local file. An
-incoming companion session leaves that playback intact. Hold a saved item to
-open its file details, then use Delete and confirm. Tapping a caption-only
-item opens its WebVTT filename and language. The library allows 64 entries;
-each package must be below 2 GiB and have a known duration of at most 24 hours. There is no
-partial-download resume; retry starts a new transfer.
-
-The CC panel offers on/off, language selection and **Save captions to SD**.
-The default track prefers source-language subtitles, with an automatic track
-as fallback. **Language selection preserves playback position and pause state**.
-The panel stays open while the language is applied, marks the selected track,
-and offers Retry after failure. CC off hides captions and keeps the selection.
-Changing language while paused retains the last video frame; caption display
-updates when playback resumes.
-Track loading retries on reconnect; videos without captions show an empty state.
-Saving opens progress; Done returns to the caption panel and shows Saved on SD.
-Back and the B button return through file details, downloads and captions in order.
-Video downloads include the selected track; caption-only downloads appear in Saved
-and have no play action. To save a different track with an existing video,
-delete that saved video and download it with the new selection.
-
-The companion reads YouTube JSON3 captions, normalizes their timing and
-produces UTF-8 WebVTT plus timed glyph coverage. **Caption glyphs travel with
-the video**, including Chinese and Japanese glyphs. Captions are selected by
-the audio clock and restored after local seek. Long cues use successive
-two-line pages during the cue interval. The saved track can be toggled
-offline; selecting another language requires the companion.
-
-Files live under **`/pocketjs/media/2bbb78fa8c360470/`** on the SD card.
-`<video-id>.pkd` contains H.264, stereo audio, the seek index and captions;
-`<video-id>.vtt` is the text sidecar. Caption-only exports use a
-`<video-id>-cc-<track>` key. The SD worker checks the transfer checksum, closes
-the temporary file, reads it back and checks the checksum again before
-publishing a completed package. The companion deletes its temporary encoded
-package after transfer or ticket expiry. **The persistent copy is on the 3DS.**
-
-Install the new native launcher for **host ABI 11**. Updating only the guest
-package cannot add the SD worker or local decoder input.
-
 ## Execution and bandwidth
 
 | Work | Owner |
@@ -200,30 +145,22 @@ NDSP or device SDK functions. Shared store actions, source resolution,
 search, card text rasterization and scrubber state serve both presentations
 (`docs/MODALITY.md` in PocketJS states the model).
 
-**Saved and caption controls are out of both presentations until the PSP
-can match them.** The New 3DS host provides `media.playback` and the SD
-worker they need; the PSP host streams a bounded CLUT8 ring from the
-companion and has no media library, no complete-file container and no
-memory-stick writer. The download and caption code stays in the store and
-the companion worker; the presentations do not mount it. Adding the feature
-back means those three PSP host pieces first, then the same
-`mediaLibrary()` calls on both devices.
-
 **One companion data layer serves both devices.** `host/companion-worker.ts`
 answers search pages (`youtube.search`), artwork (`youtube.artwork`) and
 playback commands over PocketJS offload. The 3DS reaches it over TCP
 (`bun run serve:3ds`); the PSP reaches the same worker over the PSPLINK
-share through the USB offload provider (`bun run serve:psp`), where cards
-are 512×64 IMG side files the device loads natively and video is the
-`.pkst` ring under `pocket-svc/youtube/`. Rows on both devices are
+share through the USB offload provider (`bun run serve:psp`), where video uses
+the `.pkst` ring under `pocket-svc/youtube/`. Rows on both devices are
 demand-driven resources requested for the list's visible window
 (`ClassicList.onWindow`), so a d-pad walk to the end pages in without a
 sentinel press.
 
 PocketJS owns native media playback, ticketed streaming, the bounded audio
 format, surface-aware keyboards, auxiliary WASM rendering, resource lifetime
-and bounded indexed-image uploads. It also owns the SD worker, local media
-reader, seek index and caption queue. YouTube search,
+and bounded indexed-image uploads. The **service client owns transport selection,
+job polling, deadlines and reconnect**. The **media provider owns native pause,
+ring control, end polling, stream files and the playback clock**. The app requests
+artwork through the provider image loader. YouTube search,
 video selection, encoding policy and the lower-screen layout belong here.
 
 ```sh
@@ -240,22 +177,10 @@ double. **Physical decoding, sustained frame rate, audio sync, network recovery
 and touch acceptance require a separate device receipt.** The companion logs
 decoder, presentation, buffer, byte and underrun counters every two seconds.
 
-The download tests encode a real three-second fixture, decode its saved H.264,
-check the native seek index and export timed Japanese captions. PocketJS's
-storage test executes the C worker against real local sockets and files with
-desktop thread calls replacing libctru. It covers SD readback, reopening the
-library, deletion, corrupt data, truncated data, cancellation and write errors.
-The WASM journey covers button cap edges, caption selection and retry, pause
-preservation, track pagination, save/cancel/retry, file details, Back/B navigation,
-empty captions, long-press suppression, both progress stages, offline pause/seek
-and reconnect without replacing local playback. These
-receipts cover software behavior; **on-console downloading and offline playback
-require a new hardware run**.
-
-On September 10, the user confirmed physical video and audio playback after
-the single-slice encoder correction. The subsequent classic interface update
-has separate visual and touch acceptance; that playback confirmation does not
-cover the new interface.
+The software journeys cover keyboard input, paging, playback, pause, seeking,
+back navigation and reconnect. The user confirmed the preceding 0.3.0 build's
+3DS acceptance on September 16. Provider refactoring has a separate software
+validation receipt; that confirmation does not establish a new physical run.
 
 The color correction selects `MVD_OUTPUT_BGR565`, the MVD output format used
 by the devkitPro example for the GPU's RGB565 packing. MVD's `RGB565` selection

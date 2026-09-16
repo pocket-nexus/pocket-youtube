@@ -7,7 +7,6 @@ import { oskMetrics, type OskLayerName } from "../vendor/pocketjs/framework/src/
 import { encodePNG } from "../vendor/pocketjs/tests/png.ts";
 import { titleArt, thumbnailArt } from "../host/classic-art.ts";
 import { createCanvas } from "@napi-rs/canvas";
-import { captionPackets } from "../host/captions.ts";
 import { mkdirSync } from "node:fs";
 
 test("auxiliary keyboard, paged browsing, playback controls, scrubbing and reconnect use the complete app", async () => {
@@ -17,12 +16,6 @@ test("auxiliary keyboard, paged browsing, playback controls, scrubbing and recon
   let session = 1, opened = 0, closed = 0, paused = false, volume = 1, position = 0;
   let phase = "idle", job = 0, holdPlayReply = false, playFailure = "";
   let presentedFrames = 0;
-  let trackFailure = false, noCaptions = false;
-  const tracks = [{ id: "ja", label: "Japanese" }, { id: "en", label: "English" }, ...Array.from({ length: 8 }, (_, i) => ({ id: `lang${i}`, label: `Language ${i}` }))];
-  const trackRequests: number[] = [];
-  let downloadKey = "fixture0000";
-  let holdDownloadStart = false;
-  const delayedDownloadReplies: string[] = [];
   const textNodes = new Map<number, string>();
   const parents = new Map<number, number>();
   const insertBefore = wasm.ops.insertBefore, removeChild = wasm.ops.removeChild;
@@ -34,12 +27,6 @@ test("auxiliary keyboard, paged browsing, playback controls, scrubbing and recon
   wasm.ops.destroyNode = id => { parents.delete(id); textNodes.delete(id); destroyNode(id); };
   const attached = (id: number): boolean => id === 1 || id === wasm.ops.__auxiliarySurface!.root || (parents.has(id) && attached(parents.get(id)!));
   const hasText = (value: string) => [...textNodes].some(([id, text]) => attached(id) && text.includes(value));
-  let downloadJob = 0, preparingReady = false, downloadPhase = "idle", downloadProgress = 0, libraryDirty = true;
-  let savedEntries: any[] = [], captionNext: any = null;
-  const downloadCommands: any[] = [], localOpens: any[] = [], transfers: any[] = [];
-  const captionIterator = captionPackets({ cues: [{ startMs: 0, endMs: 120000, text: "こんにちは 世界 · offline captions" }], vtt: "" }, 0);
-  const captionPacket = (await captionIterator.next()).value!; await captionIterator.return(undefined);
-  const caption = { width: 256, height: 32, endMs: 120000, coverage: Buffer.from(captionPacket.data.subarray(8)).toString("base64") };
   const jobs = new Map<number, any>();
   const rowsFixture = [
     ["京都を歩く · A quiet afternoon", "Pocket travel"], ["A little jazz for your day", "Blue Note Sessions"],
@@ -76,19 +63,9 @@ test("auxiliary keyboard, paged browsing, playback controls, scrubbing and recon
           result = { job: ++job }; jobs.set(job, { t: "results", items: rowsFixture });
         } else if (data.t === "play" || data.t === "seek") {
           position = data.to ?? data.position ?? 0;
-          result = { job: ++job }; jobs.set(job, playFailure === "request" ? { t: "error", message: "Fixture source failure" } : { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position, hasCaptions: !noCaptions, captionTrack: noCaptions ? undefined : data.track ?? "ja", captionLabel: tracks.find(track => track.id === (data.track ?? "ja"))?.label, captionError: playFailure === "captions" ? "Fixture caption failure" : undefined });
+          result = { job: ++job }; jobs.set(job, playFailure === "request" ? { t: "error", message: "Fixture source failure" } : { t: "playing", videoId: "fixture0000", title: rowsFixture[0].title, durationS: 120, fps: 30, source, stream: source.token, position });
         } else result = { t: "state", playing: false, position };
-      } else if (request.method === "youtube.download") {
-        downloadCommands.push(data);
-        if (data.operation === "start") { downloadJob++; preparingReady = false; downloadKey = data.captionsOnly ? `${data.videoId}-cc-${data.track ?? "default"}` : data.videoId; }
-        result = data.operation === "cancel" ? { phase: "cancelled" } : { job: downloadJob, phase: preparingReady ? "ready" : "encoding", ratio: .45, key: downloadKey, source, bytes: 100000, captions: "en" };
-        if (data.operation === "start" && holdDownloadStart) { delayedDownloadReplies.push(JSON.stringify({ id: request.id, payload: JSON.stringify(result) })); return true; }
-      } else if (request.method === "youtube.caption-tracks") {
-        trackRequests.push(data.offset);
-        if (trackFailure) { replies.push(JSON.stringify({ id: request.id, error: "Fixture track failure" })); return true; }
-        result = { tracks: noCaptions ? [] : tracks.slice(data.offset, data.offset + 8), more: !noCaptions && data.offset + 8 < tracks.length };
-      }
-      else if (request.method === "youtube.search") {
+      } else if (request.method === "youtube.search") {
         searches.push(data);
         result = data.offset >= pagesReadyThrough ? { pending: true } : { offset: data.offset,
           items: rowsFixture.slice(data.offset, data.offset + 5), hasMore: data.offset + 5 < rowsFixture.length };
@@ -108,14 +85,7 @@ test("auxiliary keyboard, paged browsing, playback controls, scrubbing and recon
   };
   globals.media = {
     open: () => { presentedFrames = paused ? 0 : 30; opened++; phase = "playing"; paused = false; return true; },
-    openLocal: (key: string, milliseconds: number) => { localOpens.push({ key, milliseconds }); opened++; presentedFrames = 30; phase = "playing"; paused = false; position = milliseconds / 1000; return true; },
-    caption: () => { const value = captionNext; captionNext = null; return value ? JSON.stringify(value) : null; },
-    download: (...args: any[]) => { transfers.push(args); downloadPhase = "downloading"; return true; },
-    cancelDownload: () => { downloadPhase = "cancelled"; },
-    downloadStatus: () => JSON.stringify({ phase: downloadPhase, receivedBytes: downloadProgress, totalBytes: 100000, error: downloadPhase === "error" ? "SD card write failed. Try again." : "" }),
-    refreshLibrary: () => true,
-    library: () => { if (!libraryDirty) return null; libraryDirty = false; return JSON.stringify(savedEntries); },
-    removeDownload: (key: string) => { savedEntries = savedEntries.filter(entry => entry.key !== key); libraryDirty = true; return true; }, close: () => { closed++; phase = "idle"; },
+    close: () => { closed++; phase = "idle"; },
     paused: (value: boolean) => { paused = value; }, volume: (value: number) => { volume = value; }, texture: () => texture,
     status: () => JSON.stringify({ phase: paused && phase === "playing" ? "paused" : phase, positionMs: position * 1000, bufferedMs: 300,
       decodedFrames: phase === "playing" ? presentedFrames : 0, presentedFrames: phase === "playing" ? presentedFrames : 0,

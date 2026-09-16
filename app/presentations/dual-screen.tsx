@@ -8,9 +8,8 @@
 // and the pad keeps its buttons meaning at the same time. The search field
 // shares the navigation bar; the list is the framework's ClassicList with
 // the same selection wash the PSP draws; the keyboard is the framework's
-// classic system keyboard on the auxiliary surface. Saved videos and caption
-// controls are out of this presentation until the PSP can match them.
-import { createEffect, createMemo, createSignal, onCleanup, Show, untrack, type JSX } from "solid-js";
+// classic system keyboard on the auxiliary surface.
+import { createEffect, createMemo, createSignal, Show, untrack, type JSX } from "solid-js";
 import { useActions } from "@pocketjs/framework/actions";
 import { CLASSIC, ClassicBar, ClassicFooter, ClassicList } from "@pocketjs/framework/classic";
 import { AuxiliaryPortal, AuxiliarySurface, Focusable, Image, Text, View } from "@pocketjs/framework/components";
@@ -19,7 +18,7 @@ import { createGesture } from "@pocketjs/framework/gesture";
 import { getOps, hostViewport } from "@pocketjs/framework/host";
 import { BTN } from "@pocketjs/framework/input";
 import { onButtonPress, onFrame } from "@pocketjs/framework/lifecycle";
-import { mediaPlayer, createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
+import { createMediaScrubber, type MediaStatus } from "@pocketjs/framework/media";
 import { glyph } from "@pocketjs/framework/modality";
 import { offload } from "@pocketjs/framework/offload";
 import { createOsk, Osk } from "@pocketjs/framework/osk";
@@ -27,7 +26,6 @@ import type { NodeMirror } from "@pocketjs/framework/renderer";
 import { installSystemLayer } from "@pocketjs/framework/system";
 import type { VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import { createYoutubeResources, type ArtworkCollection } from "../artwork.ts";
-import { pumpDriver } from "../driver.ts";
 import type { ResultItem } from "../protocol.ts";
 import { ArtworkRow, time } from "../rows.tsx";
 import { createCompanionSearch } from "../search.ts";
@@ -61,7 +59,6 @@ export default function DualScreenApp() {
   const resources = createYoutubeResources();
   const store = createYoutubeStore(createCompanionSearch(resources.runtime));
   onFrame(() => {
-    pumpDriver();
     store.connectTick();
   });
   // Hold SELECT: identity, connection state, the verbs of the moment — on
@@ -79,7 +76,7 @@ export default function DualScreenApp() {
 /** Both displays share a playback lifetime. Browsing never unmounts video. */
 export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollection }) {
   const artwork = props.artwork;
-  const native = mediaPlayer(), top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
+  const native = props.store.playback, top = hostViewport(getOps())!, bottom = auxiliaryViewport()!;
   const playingItem = createMemo<Pick<ResultItem, "videoId" | "title" | "channel"> | undefined>(previous => {
     const player = props.store.player();
     if (!player) return undefined;
@@ -98,12 +95,10 @@ export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollect
     if (serial === lastSerial) return;
     lastSerial = serial;
     const player = untrack(props.store.player);
-    if (!player?.source) return;
+    if (!player) return;
     setError(""); setSnapshot(null);
     if (untrack(props.store.playReason) === "play") { setPanel("controls"); setPictureVisible(false); }
-    if (!native.open(player.source)) setError("Player busy. Tap Retry.");
     native.volume(volume());
-    native.pause(!player.playing);
     if (plane) getOps().setImage(plane.id, native.texture());
   });
   onFrame(() => {
@@ -117,10 +112,9 @@ export function DualScreen(props: { store: YoutubeStore; artwork: ArtworkCollect
     if (frame % 120 === 0 && p && offload().connected())
       offload().request("youtube.metrics", JSON.stringify(status), () => {});
   });
-  onCleanup(() => native.close());
   const changeVolume = (value: number) => { setVolume(Math.max(0, Math.min(1, value))); native.volume(volume()); };
   const playPause = () => props.store.player()?.ended ? props.store.seekTo(0) : props.store.togglePause();
-  const stop = () => { native.close(); props.store.stopPlayback(); setPanel("browse"); setError(""); };
+  const stop = () => { props.store.stopPlayback(); setPanel("browse"); setError(""); };
   const position = () => props.store.player()?.position ?? 0;
   const duration = () => props.store.player()?.durationS ?? 0;
   // The pad's intents while a video is up: the same verbs the tiles offer.

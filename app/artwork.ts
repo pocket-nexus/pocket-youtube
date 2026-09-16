@@ -10,13 +10,14 @@
 //   thumbnail  72×40 sixteen-colour indexed image (3DS)
 //   card       the 512×64 IMG side file with thumbnail, title, channel,
 //              duration and views drawn on the Mac (PSP over USB, Vita);
-//              the device loads it natively with loadImgFile
+//              resolved through the framework service image loader
 //
 // The companion transport (io.offload) fetches renditions with
 // youtube.artwork requests. The legacy mailbox transport (Vita) already
 // names each row's card file in the search reply, so its collection
 // resolves on the next frame without a request.
 
+import { youtube } from "./driver.ts";
 import { after } from "@pocketjs/framework/clock";
 import { getOps } from "@pocketjs/framework/host";
 import { OFFLOAD, offload, uploadCoverage, uploadIndexedImage } from "@pocketjs/framework/offload";
@@ -49,8 +50,8 @@ export const cardRendition = (item: Pick<ResultItem, "videoId" | "card" | "cardH
   ({ videoId: item.videoId, card: item.card, cardHD: item.cardHD, revision: JSON.stringify([item.title, item.channel]) });
 
 function loadImg(file: string): number {
-  const handle = getOps().loadImgFile?.(file) ?? -1;
-  if (handle < 0) throw new Error("Card side file unavailable");
+  const handle = youtube.image(file);
+  if (handle < 0) throw new Error("Artwork unavailable");
   return handle;
 }
 
@@ -91,25 +92,7 @@ export function createYoutubeResources() {
     },
     dispose: value => getOps().freeTexture?.(value.handle),
   });
-  // Cards: the companion renders the IMG side file and answers with its
-  // path; the device loads it natively — one 15 KB USB read per frame at most.
-  const cards = runtime.createCollection<CardInput, string, CardTexture>({
-    key: input => `${input.videoId}:card:${input.revision}`,
-    // One view per mounted row: the list mounts the visible rows plus one
-    // row of overscan on each side.
-    maxEntries: 24, maxCost: 24 * CARD_COST, maxResponseBytes: 400, maxViews: 12, maxDemandsPerView: 2,
-    cost: () => CARD_COST,
-    load: offloadResource(client, "youtube.artwork", input => JSON.stringify({ videoId: input.videoId, kind: "card" })),
-    retry: { attempts: 120, delayFrames: 6, maxDelayFrames: 60 },
-    materialize(raw) {
-      const data = JSON.parse(raw);
-      if (data.pending) throw new Error("Card pending");
-      if (typeof data.file !== "string" || data.width !== 512 || data.height !== 64) throw new Error("Invalid card reply");
-      return { handle: loadImg(data.file), width: 512, height: 64 };
-    },
-    dispose: disposeCard,
-  });
-  return { runtime, artwork, cards };
+  return { runtime, artwork };
 }
 
 /** The legacy mailbox transport (Vita over TCP, the browser dev host): the

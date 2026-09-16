@@ -90,8 +90,6 @@ globals.offload = {
 globals.media = {
   open: () => { playing = true; paused = false; return true; }, close: () => { playing = false; },
   // The SD library is idle for the recording: no saved entries, no transfer.
-  library: () => null, refreshLibrary: () => true, caption: () => null,
-  downloadStatus: () => JSON.stringify({ phase: "idle", receivedBytes: 0, totalBytes: 0, error: "" }),
   paused: (value: boolean) => { paused = value; }, volume() {}, texture: () => texture,
   status: () => JSON.stringify({ phase: playing ? paused ? "paused" : "playing" : "idle", positionMs: Math.round(position * 1000),
     bufferedMs: 300, decodedFrames: playing ? 1 : 0, presentedFrames: playing ? 1 : 0,

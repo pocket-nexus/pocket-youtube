@@ -1,10 +1,7 @@
 // demos/youtube/player.tsx — the playback screen.
 //
-// One full-screen Image node bound to the native video plane (spec ops
-// 34..37): videoOpen() on entry, videoTick() every frame (the bounded USB IO
-// pump — it returns the presented source frame index, which IS the play
-// clock), videoClose() on the way out. The HUD (title, progress, hints)
-// rides hot.prop/hot.text — per-frame paint-only writes, no reactive churn.
+// The framework media provider owns the decoder and the playback clock.
+// This screen places its texture and paints title, progress and input hints.
 //
 // Input: ○ pause/resume · ◁/▷ seek ±10 s · × back to results. Touch (where
 // the host delivers contacts): tap toggles the HUD, double-tap the left or
@@ -13,7 +10,7 @@
 // release), and a downward fling leaves the player. On PSP touches() is
 // always empty and every gesture path is inert.
 
-import { createEffect, createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createSignal, Show, untrack } from "solid-js";
 import { createMediaScrubber } from "@pocketjs/framework/media";
 import { Image, Text, View } from "@pocketjs/framework/components";
 import { virtualFrame } from "@pocketjs/framework/clock";
@@ -44,7 +41,7 @@ function fmt(s: number): string {
 const HUD_FRAMES = 180;
 
 export default function Player(props: { store: YoutubeStore }) {
-  const ops = getOps();
+  const ops = getOps(), playback = props.store.playback;
   let plane: NodeMirror | undefined;
   let hud: NodeMirror | undefined;
   let bar: NodeMirror | undefined;
@@ -53,30 +50,27 @@ export default function Player(props: { store: YoutubeStore }) {
   let hudLeft = HUD_FRAMES;
   const [planeOk, setPlaneOk] = createSignal(false);
 
-  // A fresh "playing" reply = a fresh .pkst file: (re)open the stream and
-  // rebind the plane texture. playSerial() is the tracked trigger.
+  // A fresh playback reply rebinds the provider texture.
   createEffect(() => {
     props.store.playSerial();
     const p = untrack(props.store.player);
     if (!p) return;
-    setPlaneOk(ops.videoOpen?.(p.stream) ?? false);
+    setPlaneOk(playback.status().phase !== "error");
     currentS = 0;
     hudLeft = HUD_FRAMES;
     if (planeOk() && plane) {
-      const tex = ops.videoTexture?.() ?? -1;
+      const tex = playback.texture();
       if (tex >= 0) ops.setImage(plane.id, tex);
     }
   });
 
-  onCleanup(() => {
-    ops.videoClose?.();
-  });
 
   onFrame((buttons) => {
     const p = props.store.player();
     if (planeOk()) {
-      const idx = ops.videoTick?.() ?? -1;
-      if (idx >= 0 && p) currentS = idx / p.fps;
+      const status = playback.status();
+      currentS = status.positionMs / 1000;
+      if (p) props.store.reportPlayback(currentS, status.phase === "ended");
     }
     hudLeft = buttons !== 0 ? HUD_FRAMES : Math.max(0, hudLeft - 1);
     const paused = p ? !p.playing || p.ended : false;

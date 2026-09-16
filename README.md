@@ -17,14 +17,7 @@ its d-pad grid layout. **Both presentations run on one companion data
 layer**: search pages and row artwork are demand-driven resources the list
 requests for its visible window, and the presentations declare their button
 intents once (`useActions`) so the footer legend and the bottom-screen tiles
-come from the same declaration. Saved videos and caption controls are out of
-the 3DS presentation until the PSP host can match them.
-
-**Hold a video row to save it on the 3DS SD card.** The Saved screen shows
-conversion progress, SD transfer progress and completed downloads. Saved
-videos play, pause and seek with the companion disconnected. **CC** opens
-caption controls and language selection; video downloads include the selected
-captions, and **Save captions to SD** exports a separate WebVTT file.
+come from the same declaration. **Playback requires the companion connection.**
 
 <table>
   <tr><th>Search and automatic loading</th><th>Playback and browsing</th></tr>
@@ -183,14 +176,10 @@ PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
 [pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
-The framework is pinned to **PocketJS `6da4809e`**, including native 3DS media, an SD download worker, local seeking,
-timed captions, device modality with manifest presentations, and the
-modality-aware system keyboard. **This build requires a new
-3DS launcher with host ABI 11.** The PSP crate
-and `vendor/quickjs-rs` share the framework's **QuickJS revision `ba5bdd0`**;
-the PSP build passes `-O2` for the C interpreter, matching the upstream
-toolchain. After changing branches or updating the submodule pins, run
-`bun run setup` to restore the recorded revisions and locked JS dependencies.
+PocketJS owns service transports, asynchronous jobs, media control and asset
+loading. The application declares YouTube commands and renders the shared
+playback status; native media and companion ring providers select their own
+pause, clock and event mechanisms.
 
 Release validation includes `bun run psp -r`, `bun run vita` and `bun run 3ds --cia`. The Wasm
 journeys use a canned companion; USB/WiFi streaming, audio, and device input

@@ -1,13 +1,8 @@
-// demos/youtube/protocol.ts — the mailbox protocol both sides speak.
-//
-// Types only (imported by the PSP app AND the Mac host service): the wire is
-// JSON lines over pocket-svc/youtube/{out,in}.jsonl (spec.ts SVC), bulk
-// bytes ride side files (cards as IMG entries, video as a .pkst stream).
-// Every request carries the app's effect-command id; the reply echoes it, so
-// the app's driver can route deliveries without ordering assumptions.
+// YouTube commands and metadata shared with the companion.
+// PocketJS service and media providers own the wire and decoder contracts.
 
 /** Device -> host (out.jsonl / PKNT ctrl). */
-import type { MediaSource } from "@pocketjs/framework/media";
+import type { MediaPlaying } from "@pocketjs/framework/media-service";
 export type DeviceCmd =
   /** `device` negotiates the stream profile: the host picks plane size,
    *  frame rate and audio rate per target (host/profiles.ts). Omitted (the
@@ -16,13 +11,12 @@ export type DeviceCmd =
   | { t: "search"; id: number; q: string }
   /** Next batch of the LAST search; replies `results` with only NEW items. */
   | { t: "more"; id: number }
-  | { t: "play"; id: number; videoId: string; position?: number; track?: string }
+  | { t: "play"; id: number; videoId: string; position?: number }
   | { t: "pause"; id: number }
   | { t: "resume"; id: number }
   | { t: "seek"; id: number; to: number }
   | { t: "stop"; id: number }
-  /** Companion transport without native media (PSP ring): the app polls
-   *  the ring session's state instead of receiving a pushed `ended`. */
+  /** Playback state requested by the framework media provider. */
   | { t: "status"; id: number };
 
 export interface ResultItem {
@@ -35,7 +29,7 @@ export interface ResultItem {
    *  logical half-width — 1:1 texels on a 2x panel). Sent only to devices
    *  whose hello negotiated a density-2 profile. */
   cardHD?: [string, string];
-  /** svc-relative IMG-entry path for loadImgFile (256x64 card). */
+  /** Opaque artwork reference resolved by the service image loader. */
   card: string;
 }
 
@@ -43,23 +37,7 @@ export interface ResultItem {
 export type HostMsg =
   | { t: "ready"; id: number }
   | { t: "results"; id: number; items: ResultItem[] }
-  | {
-      t: "playing";
-      id: number;
-      videoId: string;
-      title: string;
-      durationS: number;
-      fps: number;
-      /** svc-relative .pkst path for videoOpen. */
-      stream: string;
-      /** Seconds the stream's frame indices are based at (0 or the seek). */
-      position: number;
-      source?: MediaSource;
-      captionTrack?: string;
-      captionLabel?: string;
-      captionError?: string;
-      hasCaptions?: boolean;
-    }
+  | (MediaPlaying & { id: number; videoId: string; title: string; durationS: number })
   | { t: "state"; id: number; playing: boolean; position: number }
   | { t: "status"; id: number; playing: boolean; position: number; ended: boolean }
   | { t: "ended" }

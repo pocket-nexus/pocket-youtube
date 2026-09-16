@@ -9,7 +9,6 @@
 // (memory: never .sh — Bun.spawn only).
 
 import { ytDlpProxyArgs } from "./proxy.ts";
-import { captionTracks, type CaptionTrack } from "./captions.ts";
 
 export interface SearchItem {
   videoId: string;
@@ -20,7 +19,6 @@ export interface SearchItem {
 }
 
 export interface ResolvedStream {
-  captionTracks?: CaptionTrack[];
   videoId: string;
   title: string;
   channel: string;
@@ -114,7 +112,6 @@ export async function resolve(videoId: string, run: Runner = spawnRunner): Promi
   return {
     videoId,
     title: typeof j.title === "string" ? j.title : videoId,
-    captionTracks: captionTracks(j),
     channel:
       (typeof j.channel === "string" && j.channel) ||
       (typeof j.uploader === "string" && j.uploader) ||

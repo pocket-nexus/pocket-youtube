@@ -30,7 +30,6 @@ import { createResourceView } from "@pocketjs/framework/resource-view";
 import { installSystemLayer } from "@pocketjs/framework/system";
 import type { VirtualListHandle } from "@pocketjs/framework/virtual-list";
 import { cardRendition, createLegacyCards, createYoutubeResources, type ArtworkCollection, type CardCollection } from "../artwork.ts";
-import { pumpDriver } from "../driver.ts";
 import Player from "../player.tsx";
 import { ArtworkRow } from "../rows.tsx";
 import { createCompanionSearch, createLegacySearch } from "../search.ts";
@@ -60,7 +59,6 @@ export default function SingleScreen() {
   // The one per-frame pump: driver IO plus the connect-phase retry,
   // registered at the root so it outlives screens.
   onFrame(() => {
-    pumpDriver();
     store.connectTick();
   });
 
