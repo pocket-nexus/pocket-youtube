@@ -188,3 +188,35 @@ exchanged red and blue. The companion retains the source colors; a real H.264
 encode/decode regression checks red, green, blue, yellow and a skin-tone patch.
 Physical color and input acceptance are recorded after installing the new
 native launcher.
+
+## Manual releases
+
+Run **Release 3DS** in the repository's Actions tab with the `main` branch, or:
+
+```sh
+gh workflow run release-3ds.yml --repo pocket-nexus/pocket-youtube --ref main
+```
+
+**Only a manual dispatch publishes a release.** The workflow builds the commit
+selected at dispatch and uses that run's creation date in **Asia/Shanghai** for
+the `vYYYY.MM.DD` tag, for example `v2026.09.23`. The embedded Pocket manifest
+uses the same date as SemVer (`2026.9.23`); these runner-local changes are not
+committed. Application IDs and CIA title IDs stay fixed. The CIA title-version
+field retains the vendored packager's value; the calendar version belongs to
+the release and embedded application manifest.
+
+Each release contains `pocket-youtube-vYYYY.MM.DD.3dsx`,
+`pocket-youtube-vYYYY.MM.DD.cia`, `SHA256SUMS` and `build-info.json`.
+The build record identifies the source commit, PocketJS pin, application
+version and Actions run. Verify downloaded binaries with
+`sha256sum --check SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SUMS`).
+
+**One release is allowed per calendar day.** An existing tag or release
+blocks another run for that date, including reruns after publication. Failed
+builds can be rerun and keep their original date. If an upload or publication
+fails after creating a draft, inspect and delete that incomplete draft and any
+matching unpublished tag before rerunning. Published assets are not replaced.
+
+Pull requests use the same build workflow to produce both formats as an
+Actions artifact, without publishing a release. CI checks compilation, binary
+headers and checksums; console boot and interaction require device validation.
