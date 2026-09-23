@@ -11,3 +11,5 @@ target/
 test/goldens-vita/*.actual.png
 out/
 .env
+.pocket-build/
+dist/release/
