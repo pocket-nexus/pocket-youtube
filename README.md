@@ -61,7 +61,7 @@ requirements, DSP setup, controls and the companion architecture.
 
 The PSP's 802.11b radio cannot reach the modern web, so the app splits at the
 network boundary: a Mac companion process owns DNS, TLS, yt-dlp and H.264,
-and the handheld — running [PocketJS](https://github.com/pocket-stack/pocketjs) —
+and the handheld — running [PocketJS](https://github.com/pocket-nexus/pocketjs) —
 owns presentation: a 60 Hz Solid UI, a 512×128 CLUT8 video plane at 12 fps,
 and a 44.1 kHz audio thread. Search with the system on-screen keyboard (the
 d-pad grid, which reopens on the key you left), browse host-rendered rows (CJK
@@ -111,7 +111,7 @@ payloads; the reader chases the tail and discards torn frames. Pause is
 ### Quick start
 
 ```sh
-git clone --recursive https://github.com/pocket-stack/pocket-youtube
+git clone --recursive https://github.com/pocket-nexus/pocket-youtube
 cd pocket-youtube
 bun run setup        # vendor install + node_modules links
 bun run bootstrap    # install the pinned PSP toolchain if missing
@@ -173,7 +173,7 @@ the companion without that proxy; the metadata and media connections are
 separate requests.
 
 PocketJS itself is vendored as a git submodule (`vendor/pocketjs`), same as
-[pocket-figma](https://github.com/pocket-stack/pocket-figma); this repo owns
+[pocket-figma](https://github.com/pocket-nexus/pocket-figma); this repo owns
 the app, the companion service, and the PSP/Vita/3DS build entry points.
 
 PocketJS owns service transports, asynchronous jobs, media control and asset
